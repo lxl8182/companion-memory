@@ -13,11 +13,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from companion_memory.service.management import ManagementApi
-from companion_memory.service.memory_service import MemoryService
-from companion_memory.service.server import MemoryApi, build_server
-from companion_memory.stack import StackError, start, status, stop
-from companion_memory.stack_config import StackConfigError, initialize, load_config
+from rin_memory.service.management import ManagementApi
+from rin_memory.service.memory_service import MemoryService
+from rin_memory.service.server import MemoryApi, build_server
+from rin_memory.stack import StackError, start, status, stop
+from rin_memory.stack_config import StackConfigError, initialize, load_config
 
 
 class StackTests(unittest.TestCase):

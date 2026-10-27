@@ -21,22 +21,22 @@ import urllib.request
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.adapters.model_http import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.adapters.model_http import (
     HttpModelInvoker,
     ModelCallError,
     ModelSettings,
     _extract_text,
     _map_http_error,
 )
-from companion_memory.errors import RootLockConflict
-from companion_memory.persistence.ownership import acquire_root_lock
-from companion_memory.service.memory_service import (
+from rin_memory.errors import RootLockConflict
+from rin_memory.persistence.ownership import acquire_root_lock
+from rin_memory.service.memory_service import (
     MemoryService,
     ServiceSettings,
     ServiceStartupError,
 )
-from companion_memory.service.server import ApiError, MemoryApi, build_server
+from rin_memory.service.server import ApiError, MemoryApi, build_server
 
 CARD = [
     {"section_id": "identity", "text": "你是一只猫娘。",

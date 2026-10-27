@@ -14,16 +14,16 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.durable import DurableEventStore, build_durable_event_store
-from companion_memory.contracts import MemoryEvent, Scope
-from companion_memory.errors import CorruptStoreError, InvalidSchemaError
-from companion_memory.persistence.atomic import FileSystemAtomicStore
-from companion_memory.persistence.clock import SystemClock
-from companion_memory.persistence.journal import EventJournal
-from companion_memory.persistence.permits import NullWritePermit, RejectingWritePermit
-from companion_memory.persistence.records import event_snapshot
-from companion_memory.persistence.roots import FileSystemRoots
-from companion_memory.persistence.source_ledger import SourceLedger
+from rin_memory.adapters.durable import DurableEventStore, build_durable_event_store
+from rin_memory.contracts import MemoryEvent, Scope
+from rin_memory.errors import CorruptStoreError, InvalidSchemaError
+from rin_memory.persistence.atomic import FileSystemAtomicStore
+from rin_memory.persistence.clock import SystemClock
+from rin_memory.persistence.journal import EventJournal
+from rin_memory.persistence.permits import NullWritePermit, RejectingWritePermit
+from rin_memory.persistence.records import event_snapshot
+from rin_memory.persistence.roots import FileSystemRoots
+from rin_memory.persistence.source_ledger import SourceLedger
 
 
 class FixedClock:

@@ -193,9 +193,9 @@
 
 | 项 | 值 |
 |---|---|
-| 核心包版本 | `companion_memory 0.1.0.dev0` |
+| 核心包版本 | `rin_memory 0.1.0.dev0` |
 | wheel | 379,375 B，sha256 `ffcf007cb623d4f0…` |
-| 安装位置 | `N.E.K.O/.venv/Lib/site-packages/companion_memory`（复制安装，非可编辑） |
+| 安装位置 | `N.E.K.O/.venv/Lib/site-packages/rin_memory`（复制安装，非可编辑） |
 | 数据根 | `F:\game\projectNEKO\nekodata\memory`（角色 `小铃`） |
 | 宿主工作树 | `git status` **117** 项（与切换前一致，未新增未提交文件） |
 | 核心工作树 | `git status` **12** 项（本地仓库，无远端） |

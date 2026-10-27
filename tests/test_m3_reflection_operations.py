@@ -25,9 +25,9 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.domain.maintenance import MaintenanceSettings
-from companion_memory.domain.reflection import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.domain.maintenance import MaintenanceSettings
+from rin_memory.domain.reflection import (
     REFLECTION_OPERATIONS,
     reflection_id_from_topic,
     scope_key,

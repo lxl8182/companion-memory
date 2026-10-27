@@ -34,7 +34,7 @@ def status(config):
         return {"status": "not_connected"}
     result = {key: record[key] for key in ("pid", "url", "config")}
     try:
-        health = _request(record["url"] + "/api/companion-memory/status")
+        health = _request(record["url"] + "/api/rin-memory/status")
         if health.get("character_id") == config.service.character and Path(health.get("host_root", "")).resolve() == config.roots["host"]:
             return dict(result, status="running", memory=health)
         return dict(result, status="port_conflict")
@@ -137,7 +137,7 @@ def stop(config):
     if current["status"] != "running":
         raise StackError("host identity is unavailable; inspect the host process before stopping it")
     try:
-        _request(record["url"] + "/api/companion-memory/flush", payload={}, timeout=8)
+        _request(record["url"] + "/api/rin-memory/flush", payload={}, timeout=8)
     except (OSError, ValueError):
         pass  # The host queue was persisted before generation and completion.
     # Flush is performed by the host shutdown handler where possible; pending

@@ -12,9 +12,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.api import MemoryEngine
-from companion_memory.contracts import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.api import MemoryEngine
+from rin_memory.contracts import (
     ContextRequest,
     CorrectionRequest,
     DeletionRequest,
@@ -282,7 +282,7 @@ class PersonaCardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(engine.persona_projection("demo")["tone"], "说话温柔。")
 
         bare = MemoryEngine(events=None, profiles=None, context=None)
-        from companion_memory.errors import NotConfiguredError
+        from rin_memory.errors import NotConfiguredError
         with self.assertRaises(NotConfiguredError):
             bare.persona_card("demo")
 

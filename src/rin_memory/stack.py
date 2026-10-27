@@ -134,7 +134,7 @@ def start(config: StackConfig, *, open_browser=True) -> dict:
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
         with log_path.open("ab") as log:
             process = subprocess.Popen(
-                [str(config.python), "-m", "companion_memory.stack", "run-service",
+                [str(config.python), "-m", "rin_memory.stack", "run-service",
                  "--config", str(config.path), "--instance", instance],
                 cwd=config.roots["state"], env=env, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT, creationflags=flags,

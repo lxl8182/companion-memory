@@ -1,8 +1,8 @@
 **铃芽 RIN · rin-memory 接手指南**
 
-更新：2026-10-28。项目根：`F:\game\projectNEKO\companion-memory`。
+更新：2026-10-28。项目根：`F:\game\projectNEKO\rin-memory`。
 
-品牌统一为“铃芽 RIN”，核心仓库与 Python 发行包为 `rin-memory`，DSH 接入仓库与 npm 包为 `dsh-rin-memory` / `@local/dsh-rin-memory`。本机目录、Python 导入名 `companion_memory`、既有数据与协议标识保留兼容；新 CLI 为 `rin-memory`、`rin-memory-run`、`rin-stack`，旧命令仍可使用。GitHub 与 origin 使用新仓库名。
+品牌统一为“铃芽 RIN”。核心目录、仓库与发行包为 `rin-memory`，Python 导入路径为 `rin_memory`；DSH 目录与仓库为 `dsh-rin-memory`，npm 包为 `@local/dsh-rin-memory`。CLI 使用 `rin-memory`、`rin-memory-run`、`rin-stack`。已有数据来源和 HTTP 合同继续使用。
 
 **1. 用户目标与当前交付边界**
 
@@ -29,7 +29,7 @@
 
 2026-10-24 已接通 S05 的 N.E.K.O 文字端：独立服务 48931、宿主 48911，同一个 companion 角色；新入口配置 `host.enabled=true` 后拉起带 `companion_host.py` 的源码宿主。完整轮次、持久补交、发布版本与页面显示回执已验证，`neko_chat` 单独计数。TTS/麦克风/主动交流等开关按实际需要调整，不再默认静音。语音播放/打断、主动/实时/游戏及宿主语义编辑继续按 roadmap 推进。
 
-**日常启动入口（新链路）**：`start-rin-stack.cmd`（仓库根，纯 ASCII 批处理）。它先起服务 48931 与 `companion_host` 宿主 48911，等宿主确认为 `connected` 后再按需拉起 Steam 桌宠壳；`NEKO_SHELL=none` 只起服务与宿主。Steam 启动选项填 `cmd /c "F:\game\projectNEKO\companion-memory\start-rin-stack.cmd" %command%`。旧的 `plugin
+**日常启动入口（新链路）**：`start-rin-stack.cmd`（仓库根，纯 ASCII 批处理）。它先起服务 48931 与 `companion_host` 宿主 48911，等宿主确认为 `connected` 后再按需拉起 Steam 桌宠壳；`NEKO_SHELL=none` 只起服务与宿主。Steam 启动选项填 `cmd /c "F:\game\projectNEKO\rin-memory\start-rin-stack.cmd" %command%`。旧的 `plugin
 ekospire\scripts\start-neko-source-shell.cmd` 走 `COMPANION_MEMORY_ENGINE` 内嵌链路，占用同样的 48911-48916 端口，两条链路不能同时开；新脚本在端口被占时直接报错，不会强杀进程。
 
 下一批原为 [N.E.K.O 宿主详细接手计划](docs/s05-neko-host-next-plan.md) 的 H01—H03，2026-10-25 已按该顺序交付并在日常实例完成只读/草稿验收：宿主角色设置直接读写服务的当前人格（新端点 `/v1/host/persona*`，能力由 `stack.toml` 的 `host_persona` 显式授予，默认关闭），聊天页按轮显示生成中/待同步/已保存/中断/失败并在刷新后恢复，文字主动交流使用固定服务快照、消费者 `neko_active` 与分类 `companion_output`，未送达候选不写正文。本轮未接实时语音、游戏或 DSH/QQ；完整桌宠壳与语音/实时/游戏验收仍未完成。工作包状态只在 roadmap 维护，交付细节见其 H01—H03 记录与 `docs/webui-console.md` §2.3。
@@ -56,9 +56,9 @@ ekospire\scripts\start-neko-source-shell.cmd` 走 `COMPANION_MEMORY_ENGINE` 内�
 | `persistence/ownership.py` | S01 根所有权锁：`canonical_root`（真实路径，处理大小写/`.`/`..`/目录别名）、`acquire_root_lock`（OS 文件锁，`mode` 仅作说明）、`read_root_lock` 诊断读取；锁记录放在锁定字节之前，冲突时可读 | CLI/宿主/WebUI 三个可写入口共用；独立服务端（S04）接入同一锁 |
 | `persistence/turns.py`、`domain/turns.py` | S02 整轮提交：`turn_requests.json` 状态机（pending/committed/failed/interrupted/deleted）、`request_id` 业务幂等（回放/冲突/已删）、`core.turn_committed` 回放处理器、`TurnCommitService`（reserve→生成→依据复查→入队→journal 提交）；删除/更正清正文只留标识 | HTTP 端点由 S04 提供；生成器/依据检查由装配方注入 |
 | `adapters/model_http.py` | S04 零依赖模型适配器：`HttpModelInvoker`（urllib + 工作线程、分档、信号量限并发、逐调用超时）、`ModelSettings`（`api_key_env` 是变量**名**）、`ModelCallError` 归类 auth/config/timeout/rate_limit/transport/format | 凭据从不记录；公网鉴权/TLS 属 S05 之后的独立设计 |
-| `service/memory_service.py`、`service/server.py` | S04 常驻服务：`MemoryService.start()`（根锁→建核心→recover→就绪）、`storage/chat/background` 分项能力、`stop()` 先停后台再放锁；`MemoryApi` 实现 `/v1/chat` `/v1/turns` `/v1/context` `/v1/requests/{id}` `/v1/health`，`MemoryRequestHandler` 为标准库传输，统一错误信封 | 默认仅回环并校验 Host/Origin；CLI 用 `companion-memory-run serve` 启动 |
+| `service/memory_service.py`、`service/server.py` | S04 常驻服务：`MemoryService.start()`（根锁→建核心→recover→就绪）、`storage/chat/background` 分项能力、`stop()` 先停后台再放锁；`MemoryApi` 实现 `/v1/chat` `/v1/turns` `/v1/context` `/v1/requests/{id}` `/v1/health`，`MemoryRequestHandler` 为标准库传输，统一错误信封 | 默认仅回环并校验 Host/Origin；CLI 用 `rin-memory-run serve` 启动 |
 | `stack_config.py`、`stack.py`、`tools/stack.ps1` | S05 新配置模板/解析、固定安装解释器、init/start/stop/status、独立根与服务进程 | 新运行根 companion-runtime；宿主目录注入与远程接线继续按 roadmap |
-| `start.cmd`、`stop.cmd`、`start.ps1`、`启动说明.txt`（仓库根） | **Windows 日常入口**：双击 `start.cmd` 启动（首跑自动 `init`、已在运行则复用、成功后开浏览器），`stop.cmd` 停止，`start.ps1 -Action status` 查看状态。`start.cmd`/`stop.cmd` 为 GBK，`start.ps1`/`启动说明.txt` 为 UTF-8 BOM | 走同一套 `companion_memory.stack`；解释器默认仓库 `.venv`，可用 `-Python` 覆盖 |
+| `start.cmd`、`stop.cmd`、`start.ps1`、`启动说明.txt`（仓库根） | **Windows 日常入口**：双击 `start.cmd` 启动（首跑自动 `init`、已在运行则复用、成功后开浏览器），`stop.cmd` 停止，`start.ps1 -Action status` 查看状态。`start.cmd`/`stop.cmd` 为 GBK，`start.ps1`/`启动说明.txt` 为 UTF-8 BOM | 走同一套 `rin_memory.stack`；解释器默认仓库 `.venv`，可用 `-Python` 覆盖 |
 | `service/listening.py` | 绑定语义的唯一实现：Windows 用 `SO_REUSEADDR` 会让第二个进程绑上**正在监听**的端口（曾导致同端口多实例），因此平台分支为 Windows 独占 / POSIX 允许 reuse | 两个传输层都用 `ExclusiveAddrMixin`；新增监听 socket 时勿自行设 `allow_reuse_address` |
 | `service/console.py`、`service/management.py` | 复用既有管理业务视图，同核心 /v1 管理接口、空库创建/首次发布、写身份与显示名 | 水彩资源随 wheel；当前 API 合同见 docs/webui-console.md。**显示名是人格卡身份段首行 `名字: <名字>`，不是独立文件或独立段落**：`service_character.json` 与旧 `identity_name` 段都只作一次性迁移来源，并入后删除；编辑身份正文时服务会自动保留名字行 |
 | `service/chat.py` | 管理台直连对话 `ChatBridge`：组装 `TurnRequest` 后调 `MemoryApi.chat`，复用整轮提交/幂等重放/能力状态；`history()` 只读 `recent.json`；`DemoChatModel` 仅供 demo 根且回复自述离线 | 不新增领域规则；`status()` 只报凭据是否存在，永不返回凭据；对宿主接入（C）无前置依赖 |
@@ -171,15 +171,15 @@ B01 冻结的接口字段与端口见 design.md §17.9，B02 已实现存储侧�
 **8. 开发与验证**
 
 ```powershell
-cd F:\game\projectNEKO\companion-memory
+cd F:\game\projectNEKO\rin-memory
 uv sync
-uv run python -m companion_memory
+uv run python -m rin_memory
 uv run python -m unittest discover -s tests -v
 ```
 
 已有测试覆盖三类框架风险（来源幂等与冲突、主体/场景隔离、可选召回取消且保留人格）与 B02 持久化风险（重开保持、重试只生效一次、中断恢复、损坏/未知 schema 不覆盖、写许可拒绝）。无需新增测试依赖；后续按迁入模块复用原测试，再补真正缺失的行为用例；需要多少测试就加多少，不再设数量上限。
 
-本轮实际检查：Python 3.11.15；`uv sync`、内存示例、3 个 unittest 均通过；`uv build` 成功生成 sdist 与 wheel，wheel 已在 uv 隔离环境运行示例。Windows 管道中需要明确 UTF-8 时使用 `python -X utf8 -m companion_memory`。这些检查覆盖框架，不包含原记忆系统或宿主接入。B01 轮复核：unittest 3/3 与内存示例仍通过；宿主侧只读核对未修改工作树。B02 轮检查：unittest 15/15 通过（框架 3 + B02 新增 12）；`python -m companion_memory` 输出内存与临时数据根两段，后者 `durable=true`、重试与重开均为 `duplicate`；核心包无宿主导入，数据只在系统临时目录创建。宿主侧测试入口与基线方法见 design.md §17.11/§17.12。B03 轮检查：unittest 29/29 通过（框架 3 + B02 12 + B03 新增 14）；`python -m companion_memory` 输出内存、B02 持久、B03 更正+删除三段，第三段删除后重放同来源返回 `rejected/deleted_source/durable=true`，重开回执仍 completed；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。B04 轮检查：unittest 39/39 通过（B03 14 + B04 新增 10：recent 3、classification 3、extraction 4）；`python -m companion_memory` 增加第四段对话→抽取→压缩闭环（固定替身模型，无网络），facts 行含 hash/source/schema_version、压缩 summarized=14、timeindex 原文行保留；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。B05 轮检查：unittest 60/60 通过（B04 10 + B05 新增 21：存储 6、反思域 11、人格域 4）；`python -m companion_memory` 增加第五段事实→反思→证据→晋升→成长→删除收窄→growth 撤回→重开闭环（固定替身模型，无网络），persona id 为 `prom_<reflection_id>`/`prom_growth_<sha1>`，删除后反思收窄 `needs_rebuild` 且派生人格被撤回，重开后状态保持；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。B06 轮检查：unittest 68/68 通过（B05 60 + B06 新增 8：排序/融合 2、读侧失效 1、指代/episode 1、预算与端口 1、成长块 1、时间召回/降级 1、引擎 build_context 1）；`python -m companion_memory` 增加第六段召回闭环（固定替身嵌入/计数器，无网络），显式召回 hybrid 且带 source_keys、被动上下文命中 2 条、新话题 miss、指代续接带 episode_id、更正后召回 miss 但更正块可见、时间窗召回命中；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。B07 轮检查：unittest 76/76 通过（B06 68 + B07 新增 8：状态 3、outbox 1、维护循环 1、引擎 API 1、CLI 2）；`python -m companion_memory` 增加第七段独立闭环（租约+状态提交 version=1、6h 后情绪强度 0.50 且版本不变、outbox processed=1/pending=0、维护 10 步、删除后 retry ok、重开保持）；`python -m companion_memory.cli run --memory-root <临时目录> --character demo --once` 退出码 0，持锁并发退出码 3，nekodata/Documents 路径退出码 2；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。
+本轮实际检查：Python 3.11.15；`uv sync`、内存示例、3 个 unittest 均通过；`uv build` 成功生成 sdist 与 wheel，wheel 已在 uv 隔离环境运行示例。Windows 管道中需要明确 UTF-8 时使用 `python -X utf8 -m rin_memory`。这些检查覆盖框架，不包含原记忆系统或宿主接入。B01 轮复核：unittest 3/3 与内存示例仍通过；宿主侧只读核对未修改工作树。B02 轮检查：unittest 15/15 通过（框架 3 + B02 新增 12）；`python -m rin_memory` 输出内存与临时数据根两段，后者 `durable=true`、重试与重开均为 `duplicate`；核心包无宿主导入，数据只在系统临时目录创建。宿主侧测试入口与基线方法见 design.md §17.11/§17.12。B03 轮检查：unittest 29/29 通过（框架 3 + B02 12 + B03 新增 14）；`python -m rin_memory` 输出内存、B02 持久、B03 更正+删除三段，第三段删除后重放同来源返回 `rejected/deleted_source/durable=true`，重开回执仍 completed；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。B04 轮检查：unittest 39/39 通过（B03 14 + B04 新增 10：recent 3、classification 3、extraction 4）；`python -m rin_memory` 增加第四段对话→抽取→压缩闭环（固定替身模型，无网络），facts 行含 hash/source/schema_version、压缩 summarized=14、timeindex 原文行保留；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。B05 轮检查：unittest 60/60 通过（B04 10 + B05 新增 21：存储 6、反思域 11、人格域 4）；`python -m rin_memory` 增加第五段事实→反思→证据→晋升→成长→删除收窄→growth 撤回→重开闭环（固定替身模型，无网络），persona id 为 `prom_<reflection_id>`/`prom_growth_<sha1>`，删除后反思收窄 `needs_rebuild` 且派生人格被撤回，重开后状态保持；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。B06 轮检查：unittest 68/68 通过（B05 60 + B06 新增 8：排序/融合 2、读侧失效 1、指代/episode 1、预算与端口 1、成长块 1、时间召回/降级 1、引擎 build_context 1）；`python -m rin_memory` 增加第六段召回闭环（固定替身嵌入/计数器，无网络），显式召回 hybrid 且带 source_keys、被动上下文命中 2 条、新话题 miss、指代续接带 episode_id、更正后召回 miss 但更正块可见、时间窗召回命中；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。B07 轮检查：unittest 76/76 通过（B06 68 + B07 新增 8：状态 3、outbox 1、维护循环 1、引擎 API 1、CLI 2）；`python -m rin_memory` 增加第七段独立闭环（租约+状态提交 version=1、6h 后情绪强度 0.50 且版本不变、outbox processed=1/pending=0、维护 10 步、删除后 retry ok、重开保持）；`python -m rin_memory.cli run --memory-root <临时目录> --character demo --once` 退出码 0，持锁并发退出码 3，nekodata/Documents 路径退出码 2；`uv build` 成功；核心包无宿主导入，数据只在系统临时目录创建，未读写 nekodata、未改宿主/插件。
 
 B08 轮检查（宿主侧，只读新增文件+1 处钩子）：新增 `app/memory_server/engine_bridge/`（ports/runtime/mappers/middleware）并在 `app/memory_server/runtime.py` 加 5 行安装钩子；`pytest tests/unit/test_engine_bridge_*.py -q` 25 passed，宿主基线 38 passed，`git status --porcelain` 110（原 106+4），默认关闭时宿主行为不变；未读 nekodata、未启服务、未切换正式目录。B09 轮检查：宿主必跑 38 passed、26 个定向文件 25 绿 506 passed（唯一既有失败 test_outbox_wiring 并发语言用例，基线即失败）、前端 node 71 pass、engine enabled 集成 25 passed；git 110 前后一致、无 __pycache__、未启端口。B10 轮检查：B10 当批 82/82（B10 新增 6）；八段 demo 第 8 段（当前已扩为十一段）（卡导入/修订/冻结拒绝自动修订/来源删除移除投影/重开保持）；`uv build` 成功；核心无宿主导入。B11 轮检查：`tests.test_b11_publish` 6/6；B11 当批 88/88；九段 demo 第 9 段（当前已扩为十一段）（next_turn/realtime/game 发布、旧消费者 superseded、planner matched/reissue、rollback 后重开保持）；核心无宿主导入。B12 轮检查：`tests.test_b12_evolution` 6/6；B12 当批 94/94；十段 demo 第 10 段（当前已扩为十一段）（模型 2 次调用、提案写入但卡片 revision 不变、request_id duplicate、冻结段落拒绝）；核心无宿主导入。
 
@@ -193,14 +193,14 @@ C06 切换检查（2026-10-23，用户授权）：宿主 .venv 安装 wheel；�
 
 开发安装使用独立 `.venv`。交付包应能从构建出的 wheel 在独立环境导入；确认不包含宿主运行依赖。
 
-**写入所有权（S01，2026-10-23 起）**：同一数据根同一时刻只有一个写入进程，经 `persistence/ownership.py` 的 OS 文件锁（`.companion_memory.root.lock`）仲裁。CLI `run`/`migrate`/`rollback`、宿主 `engine_bridge/runtime.py`（`build_core` 取锁，`reload`/`shutdown` 释放）、WebUI 可写在线模式（`build_live_core` 取锁，`close()` 释放）全部纳入；只读入口不取锁。互斥只看 OS 锁——pid/mode 仅供排障，**不要**再引入「pid 不在即清理锁」的逻辑。修改任何新增可写入口时，必须先取得根锁再装配核心，否则本规则失效。
+**写入所有权（S01，2026-10-23 起）**：同一数据根同一时刻只有一个写入进程，经 `persistence/ownership.py` 的 OS 文件锁（`.rin_memory.root.lock`）仲裁。CLI `run`/`migrate`/`rollback`、宿主 `engine_bridge/runtime.py`（`build_core` 取锁，`reload`/`shutdown` 释放）、WebUI 可写在线模式（`build_live_core` 取锁，`close()` 释放）全部纳入；只读入口不取锁。互斥只看 OS 锁——pid/mode 仅供排障，**不要**再引入「pid 不在即清理锁」的逻辑。修改任何新增可写入口时，必须先取得根锁再装配核心，否则本规则失效。
 
 代码遵循 Python 3.11、异步 I/O、明确类型与边界校验。生产模型调用沿用宿主层级配置并有输入/输出预算及 timeout；不写死模型或复制密钥。
 
 **9. 数据、部署与版本管理**
 
 - 当前工作树是新建的独立本地 Git 仓库，无远端。不要向 N.E.K.O upstream 推送或创建 PR。
-- 现有运行根（`companion-runtime`）、`nekodata`、锚点根都可以直接读写、清空、重来；测试数据不需要保留，也不强制新建临时根。服务、宿主、管理台不受路径限制；只有独立 `companion-memory` CLI 的 `--memory-root/--backup-root` 仍带代码级路径校验（`cli.py` 的 `validate_data_root`，本轮按要求未改代码），需要直连真实根时走服务/管理台。
+- 现有运行根（`companion-runtime`）、`nekodata`、锚点根都可以直接读写、清空、重来；测试数据不需要保留，也不强制新建临时根。服务、宿主、管理台不受路径限制；只有独立 `rin-memory` CLI 的 `--memory-root/--backup-root` 仍带代码级路径校验（`cli.py` 的 `validate_data_root`，本轮按要求未改代码），需要直连真实根时走服务/管理台。
 - **唯一例外：人格卡不能清空或重建。** 指 `<memory_root>/persona_card.json`、`persona_versions.json`、`persona_admin.json`、`persona_card_archive/` 以及宿主侧投影（`host/memory/<角色>/persona.json`、`host/config/characters.json` 的身份语义段）。这些人格内容只能通过服务的正常编辑、发布、回滚和演化流程修改；其它记忆/日志/队列/回执/配置可以随时删光重来。
 - 真正部署前按工作区规则检查服务与游戏状态，安排单写者切换。当前没有部署授权需要执行的步骤。
 - 回滚保留切换后新增对话、更正及删除，不能直接恢复旧目录使数据倒退。

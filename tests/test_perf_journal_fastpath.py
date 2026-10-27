@@ -18,13 +18,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.errors import CorruptStoreError
-from companion_memory.persistence.journal import EventJournal
-from companion_memory.persistence.atomic import FileSystemAtomicStore
-from companion_memory.persistence.clock import SystemClock
-from companion_memory.persistence.permits import NullWritePermit
-from companion_memory.persistence.roots import FileSystemRoots
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.errors import CorruptStoreError
+from rin_memory.persistence.journal import EventJournal
+from rin_memory.persistence.atomic import FileSystemAtomicStore
+from rin_memory.persistence.clock import SystemClock
+from rin_memory.persistence.permits import NullWritePermit
+from rin_memory.persistence.roots import FileSystemRoots
 
 _EVENT_TYPE = "core.source_recorded"
 

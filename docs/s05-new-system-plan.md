@@ -1,8 +1,8 @@
 # S05：新系统开发与验收计划
 
-更新：2026-10-24。适用项目：`F:\game\projectNEKO\companion-memory`。
+更新：2026-10-24。适用项目：`F:\game\projectNEKO\rin-memory`。
 
-目标是交付一套从空目录启动、可日常使用的独立记忆系统：companion-memory 提供唯一记忆与人格服务，N.E.K.O 负责对话和表现，WebUI 负责管理。验收通过后，新配置和新启动入口成为唯一日常入口。
+目标是交付一套从空目录启动、可日常使用的独立记忆系统：rin-memory 提供唯一记忆与人格服务，N.E.K.O 负责对话和表现，WebUI 负责管理。验收通过后，新配置和新启动入口成为唯一日常入口。
 
 本文按用户最新要求取代原 S05 的内嵌/独立双模式切换方案。开发阶段、工作包、验收条件及当前执行入口以本文为准；本文同步展示进度，详细交付与验证记录保留在 [roadmap.md](roadmap.md) 的 S05 条目，两处随交付同步更新。
 
@@ -31,7 +31,7 @@
 | 项目 | 决定 |
 |---|---|
 | 起点 | 新建配置、新建数据根、新建角色与人格卡；复用现有核心、宿主表现代码和水彩管理台 |
-| 运行方式 | companion-memory 独立服务是唯一核心写者；宿主和管理台访问服务 |
+| 运行方式 | rin-memory 独立服务是唯一核心写者；宿主和管理台访问服务 |
 | 日常启动 | 提供一套新的初始化、启动、停止、状态入口；宿主子进程全部由新入口传递配置 |
 | 旧系统 | 取消旧数据迁移、旧基线对比、C06 前置验收、双模式开关和回退旧系统的工作 |
 | 完成后 | 停用旧启动入口、配置读取与内嵌记忆运行路径；日常文档仅列新入口 |
@@ -44,7 +44,7 @@
 
 ```text
 新 stack 配置 + 新启动入口
-    ├─ companion-memory 服务（唯一 MemoryCore、根锁与维护循环）
+    ├─ rin-memory 服务（唯一 MemoryCore、根锁与维护循环）
     │    ├─ /v1：对话、上下文、事件、管理、消费回执
     │    └─ /：现有水彩 WebUI，与 API 同源
     └─ N.E.K.O 宿主
@@ -86,7 +86,7 @@ F:\game\projectNEKO\companion-runtime\
 
 ### 2.2 新启动入口
 
-`companion-memory/tools/stack.ps1` 已提供 `init/start/stop/status` 四个动作及帮助示例。当前已接通服务和同源管理台，宿主与桌宠启动在 A/C 后续补齐。使用形式为：
+`rin-memory/tools/stack.ps1` 已提供 `init/start/stop/status` 四个动作及帮助示例。当前已接通服务和同源管理台，宿主与桌宠启动在 A/C 后续补齐。使用形式为：
 
 ```powershell
 .\tools\stack.ps1 init -Config F:\game\projectNEKO\companion-runtime\config\stack.toml
@@ -258,9 +258,9 @@ S05 完成须同时满足：P0 对应问题闭环，A—F 交付齐全，N01—N
 
 | 位置 | 修改内容 |
 |---|---|
-| `src/companion_memory/stack_config.py`、`stack.py` | 已有新配置模板/解析、固定安装解释器及服务进程入口；后续接宿主配置与进程 |
-| `src/companion_memory/service/` | 已有同核心管理视图、管理台对话、静态资源与服务生命周期；后续补客户端合同 |
-| `src/companion_memory/domain/`、`adapters/composition.py` | 复用领域操作；只补初始化、失效、回执所需接线 |
+| `src/rin_memory/stack_config.py`、`stack.py` | 已有新配置模板/解析、固定安装解释器及服务进程入口；后续接宿主配置与进程 |
+| `src/rin_memory/service/` | 已有同核心管理视图、管理台对话、静态资源与服务生命周期；后续补客户端合同 |
+| `src/rin_memory/domain/`、`adapters/composition.py` | 复用领域操作；只补初始化、失效、回执所需接线 |
 | `webui/server.py`、`webui/designs/tidebell/live.js` | 复用开发传输和页面；已有新服务初始化、管理及对话流程 |
 | `pyproject.toml` | 交付包中的管理台资源与安装入口 |
 | `tools/stack.ps1`、新 `stack.toml` | 已有服务初始化、启动、停止和状态；后续扩展宿主生命周期 |

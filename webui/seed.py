@@ -34,8 +34,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Awaitable, TypeVar
 
-from companion_memory.adapters.composition import build_memory_core as build_core
-from companion_memory.contracts import (
+from rin_memory.adapters.composition import build_memory_core as build_core
+from rin_memory.contracts import (
     CorrectionRequest,
     DeletionRequest,
     DeletionTarget,
@@ -43,12 +43,12 @@ from companion_memory.contracts import (
     Scene,
     Scope,
 )
-from companion_memory.domain.evolution import EvolutionSettings
-from companion_memory.event_sources import (
+from rin_memory.domain.evolution import EvolutionSettings
+from rin_memory.event_sources import (
     build_host_source_key,
     build_plugin_source_key,
 )
-from companion_memory.persistence.permits import NullWritePermit, RejectingWritePermit
+from rin_memory.persistence.permits import NullWritePermit, RejectingWritePermit
 
 CHARACTER = "suzume"
 DISPLAY_NAME = "铃芽"
@@ -232,7 +232,7 @@ def build_live_core(
     root = _resolve_root(memory_root, allow_nekodata=True)
     lock = None
     if writable:
-        from companion_memory.persistence.ownership import acquire_root_lock
+        from rin_memory.persistence.ownership import acquire_root_lock
 
         lock = acquire_root_lock(root, mode="console")
     try:

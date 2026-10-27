@@ -51,7 +51,7 @@ class StackConfig:
 
 
 def _is_source_tree(python: Path) -> bool:
-    """Whether this interpreter resolves `companion_memory` from a checkout.
+    """Whether this interpreter resolves `rin_memory` from a checkout.
 
     Used only to relax the version pin: a checkout's version changes with every
     edit, and the interpreter is running exactly that code. An installed wheel
@@ -63,8 +63,8 @@ def _is_source_tree(python: Path) -> bool:
 
         completed = subprocess.run(
             [str(python), "-c",
-             "import companion_memory, pathlib;"
-             "print(pathlib.Path(companion_memory.__file__).resolve())"],
+             "import rin_memory, pathlib;"
+             "print(pathlib.Path(rin_memory.__file__).resolve())"],
             capture_output=True, text=True, timeout=30,
         )
     except (OSError, subprocess.SubprocessError):
@@ -74,7 +74,7 @@ def _is_source_tree(python: Path) -> bool:
     module_path = completed.stdout.strip()
     if not module_path:
         return False
-    # `<repo>/src/companion_memory/__init__.py` lives beside a `pyproject.toml`
+    # `<repo>/src/rin_memory/__init__.py` lives beside a `pyproject.toml`
     # in `<repo>`; a wheel install does not.
     package_dir = Path(module_path).parent
     source_root = package_dir.parent

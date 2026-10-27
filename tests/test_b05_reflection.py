@@ -15,14 +15,14 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import (
     CorrectionRequest,
     DeletionRequest,
     DeletionTarget,
     Scope,
 )
-from companion_memory.domain.reflection import (
+from rin_memory.domain.reflection import (
     ReflectionSettings,
     reflection_id_from_topic,
 )

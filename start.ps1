@@ -3,7 +3,7 @@
   铃芽 RIN 一键启动 / 停止 / 状态（Windows 双击或命令行）。
 
 .DESCRIPTION
-  这是 companion-memory 的日常入口。它在仓库根目录运行，替你把
+  这是 rin-memory 的日常入口。它在仓库根目录运行，替你把
   「找解释器 → 准备配置 → 启动服务 → 打开管理台」串起来：
 
     * 首次运行自动在 companion-runtime\config\stack.toml 生成配置模板
@@ -64,7 +64,7 @@ function Resolve-Python {
 
 function Invoke-Stack([string[]]$StackArgs) {
     $py = Resolve-Python
-    # -m 走的是已安装（或 editable）的 companion_memory；开发树需要 src 在路径上。
+    # -m 走的是已安装（或 editable）的 rin_memory；开发树需要 src 在路径上。
     $env:PYTHONPATH = (Join-Path $RepoRoot 'src')
     $env:PYTHONUTF8 = '1'
     # 只返回退出码：需要输出的调用方用 Invoke-StackOutput，否则 JSON 会和
@@ -72,7 +72,7 @@ function Invoke-Stack([string[]]$StackArgs) {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & $py -m companion_memory.stack @StackArgs 2>&1 | Out-Null
+        & $py -m rin_memory.stack @StackArgs 2>&1 | Out-Null
         $code = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous
@@ -89,7 +89,7 @@ function Invoke-StackOutput([string[]]$StackArgs) {
     $outFile = [System.IO.Path]::GetTempFileName()
     $errFile = [System.IO.Path]::GetTempFileName()
     try {
-        $proc = Start-Process -FilePath $py -ArgumentList (@('-m', 'companion_memory.stack') + $StackArgs) `
+        $proc = Start-Process -FilePath $py -ArgumentList (@('-m', 'rin_memory.stack') + $StackArgs) `
             -NoNewWindow -Wait -PassThru `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
         $script:StackExitCode = $proc.ExitCode
@@ -107,9 +107,9 @@ function Invoke-StackOutput([string[]]$StackArgs) {
 function Test-Prerequisites {
     $py = Resolve-Python
     Write-Step "解释器  $py"
-    $probe = & $py -c "import companion_memory, sys; print(companion_memory.__version__ if hasattr(companion_memory,'__version__') else 'ok')" 2>&1
+    $probe = & $py -c "import rin_memory, sys; print(rin_memory.__version__ if hasattr(rin_memory,'__version__') else 'ok')" 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Bad "这个解释器没有 companion_memory 包。"
+        Write-Bad "这个解释器没有 rin_memory 包。"
         Write-Step '在仓库根执行：uv sync    （或 pip install -e .)'
         return $false
     }
@@ -246,7 +246,7 @@ function Show-Status {
 }
 
 Write-Host ''
-Write-Host '  铃芽 RIN · companion-memory' -ForegroundColor DarkCyan
+Write-Host '  铃芽 RIN · rin-memory' -ForegroundColor DarkCyan
 Write-Host '  ─────────────────────────────' -ForegroundColor DarkGray
 switch ($Action) {
     'init' {

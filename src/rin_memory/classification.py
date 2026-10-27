@@ -8,7 +8,7 @@ This module is pure. Classification reads a message's metadata only; the
 filter receives its gate inputs (legacy barrier cutoff, deleted source keys)
 as arguments and performs no IO. Reading .fact_suppression.json /
 .source_gate_state.json lives in
-companion_memory.persistence.gates.SuppressionGate.
+rin_memory.persistence.gates.SuppressionGate.
 
 Rules kept from the host:
 

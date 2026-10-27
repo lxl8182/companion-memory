@@ -1,14 +1,14 @@
 # 服务器 QQ 接入计划：DSH 陪伴角色、独立记忆与后台执行
 
-2026-10-25 最新本机执行规格见 [dsh-companion-memory/PLAN.md §9](../../dsh-companion-memory/PLAN.md#qq-main-session-plan)：先精简 QQ 主会话、按追加历史优化前缀缓存，并落实统一任务入口所需的最小独立执行闭环。进度维护在 roadmap §2.5；本文继续定义完整任务调度与后续服务器交付。
+2026-10-25 最新本机执行规格见 [dsh-rin-memory/PLAN.md §9](../../dsh-rin-memory/PLAN.md#qq-main-session-plan)：先精简 QQ 主会话、按追加历史优化前缀缓存，并落实统一任务入口所需的最小独立执行闭环。进度维护在 roadmap §2.5；本文继续定义完整任务调度与后续服务器交付。
 
 更新：2026-10-25。本文替换原 AstrBot 接入方案，供开发 agent 直接实施。当前优先 Windows 本机开发与桌面版接入，完成后再部署 Linux。批次状态只在 [roadmap](roadmap.md) 维护。
 
-当前执行入口为 [DSH 记忆插件计划 §9](../../dsh-companion-memory/PLAN.md#qq-main-session-plan)。用户已确定统一人格、记忆、保存、更正删除和恢复全部在该插件实现，与现有 QQ bridge 共存；本机已更新 rc.3。基础闭环沿用 DM01—DM06 已有修复与剩余验收，本批按 QP01—QP08 精简主会话、优化缓存，并接通最小独立执行；完整后台调度与 Linux 继续按后续工作包推进。专项状态见 roadmap §2.4/§2.5；下文 rc.1 是前期基线。
+当前执行入口为 [DSH 记忆插件计划 §9](../../dsh-rin-memory/PLAN.md#qq-main-session-plan)。用户已确定统一人格、记忆、保存、更正删除和恢复全部在该插件实现，与现有 QQ bridge 共存；本机已更新 rc.3。基础闭环沿用 DM01—DM06 已有修复与剩余验收，本批按 QP01—QP08 精简主会话、优化缓存，并接通最小独立执行；完整后台调度与 Linux 继续按后续工作包推进。专项状态见 roadmap §2.4/§2.5；下文 rc.1 是前期基线。
 
 **1. 已确定的路线与交付目标**
 
-采用 **QQ → 现成 QQ bridge → DSH 陪伴角色 → 按需委派独立执行会话**。companion-memory 为人格和长期记忆的唯一权威服务。先在 Windows 本机 `E:\dsh\desktop` 开发，目标 DSH `0.2.1-rc.3`；记忆插件独立目录为 `F:\game\projectNEKO\dsh-companion-memory`，bridge 开发副本为 `E:\dsh\plugins\dsh-qq-bridge`，本机流程完成后部署 Linux。模型通过远程 API 调用，首版只开放绑定主人的私聊文字交互。
+采用 **QQ → 现成 QQ bridge → DSH 陪伴角色 → 按需委派独立执行会话**。rin-memory 为人格和长期记忆的唯一权威服务。先在 Windows 本机 `E:\dsh\desktop` 开发，目标 DSH `0.2.1-rc.3`；记忆插件独立目录为 `F:\game\projectNEKO\dsh-rin-memory`，bridge 开发副本为 `E:\dsh\plugins\dsh-qq-bridge`，本机流程完成后部署 Linux。模型通过远程 API 调用，首版只开放绑定主人的私聊文字交互。
 
 日常对话也由 DSH 内的陪伴角色生成。它使用服务发布的人格与记忆；当前记忆专项保留 DSH 已配置工具与权限，后续可接可调用的视频/音乐工具。项目操作的独立执行角色和后台委派在 Q03 完成；届时长任务后台运行时，QQ 仍能继续聊天、查询、补充和取消。
 
@@ -19,7 +19,7 @@ flowchart TD
     U[主人 QQ 私聊] <--> Q[QQ 官方通道或 NapCat / OneBot]
     Q <--> B[dsh-qq-bridge]
     B <--> C[DSH 陪伴角色]
-    C <--> M[companion-memory\n人格、召回、更正、演化]
+    C <--> M[rin-memory\n人格、召回、更正、演化]
     C -->|明确交代操作任务| E[DSH 独立执行会话]
     E --> W[授权项目与工具]
     E -->|进度、审批、完成结果| C
@@ -34,13 +34,13 @@ flowchart TD
 
 优先完成官方 QQ Bot 私聊通道；如果用户选择普通 QQ 好友账号，则使用 NapCat / OneBot。首轮固定并验收其中一条通道，另一条不作为首版交付条件。账号绑定、官方身份配对或 NapCat 扫码在部署时由用户完成。
 
-Q01 必须锁定实际可用的 DSH 与 bridge commit/tag、Node/Python 版本及协议接口，验证建会话、回复转发、会话恢复、委派和必要审批。保持 bridge 的当前工作方式，仅对本计划涉及的边界补代码。现有 memo、角色文本等功能在接入后分别归属：通用人格与长期记忆统一走 companion-memory，任务备忘和运行状态仍可留在 bridge。
+Q01 必须锁定实际可用的 DSH 与 bridge commit/tag、Node/Python 版本及协议接口，验证建会话、回复转发、会话恢复、委派和必要审批。保持 bridge 的当前工作方式，仅对本计划涉及的边界补代码。现有 memo、角色文本等功能在接入后分别归属：通用人格与长期记忆统一走 rin-memory，任务备忘和运行状态仍可留在 bridge。
 
 **3. 各部分职责与最小改动位置**
 
 | 部分 | 复用内容 | 本批需要开发或配置 |
 |---|---|---|
-| companion-memory | 权威核心、HTTP 合同、管理台、发布、更正/删除、演化 | 必要的 QQ 消费/传输回执适配，Linux 启动配套 |
+| rin-memory | 权威核心、HTTP 合同、管理台、发布、更正/删除、演化 | 必要的 QQ 消费/传输回执适配，Linux 启动配套 |
 | QQ bridge | QQ 收发、身份校验、会话映射、控制指令与已有通知 | 稳定请求号、最终可见回复关联、持久发送和任务映射、接入状态 |
 | DSH 记忆插件 | 标准插件生命周期、按 Agent 作用域扩展提示词 | 生成前固定上下文、整轮提交、补交、清理与范围隔离 |
 | 陪伴角色 | DSH 模型调用、持久会话、已配置工具与后续委派 | 服务人格接入；工具权限沿用实际配置，Q03 再落实执行角色分工 |
@@ -132,7 +132,7 @@ bridge 的新建会话、切换目录、模型和权限等控制操作统一经�
 
 本节是本机验收之后的部署目标；当前开发使用上述 Windows 目录与 desktop profile，账号由用户自行配置，不自动修改桌面 UI。
 
-采用同机 systemd 服务：companion-memory、DSH Web runtime（加载 bridge 和记忆插件），选用 NapCat 时增加其运行组件。记忆服务继续绑定 `127.0.0.1:48931`，DSH 管理页绑定回环或受控私网，管理访问走 SSH 隧道或已有私网。
+采用同机 systemd 服务：rin-memory、DSH Web runtime（加载 bridge 和记忆插件），选用 NapCat 时增加其运行组件。记忆服务继续绑定 `127.0.0.1:48931`，DSH 管理页绑定回环或受控私网，管理访问走 SSH 隧道或已有私网。
 
 建议目录：
 
@@ -180,7 +180,7 @@ bridge 的新建会话、切换目录、模型和权限等控制操作统一经�
 建议代码落点：
 
 - 本仓库仅放必要的核心回执与 Linux 启动改动，继续保持宿主无关。
-- 工作区根 `F:\game\projectNEKO\dsh-companion-memory\` 放独立记忆插件及其隔离测试，配置样例与角色 preset 同包维护。
+- 工作区根 `F:\game\projectNEKO\dsh-rin-memory\` 放独立记忆插件及其隔离测试，配置样例与角色 preset 同包维护。
 - QQ 特有补强放选定 bridge 的独立开发副本；实施前确认实际路径和 Git 来源，保留上游归属，不覆盖其他已有插件。
 - 部署脚本靠近实际部署项目维护。执行工具、QQ SDK 和 DSH 依赖留在插件/桥接侧。
 
@@ -200,4 +200,4 @@ bridge 的新建会话、切换目录、模型和权限等控制操作统一经�
 
 可转交任务：
 
-> 先按 F:\game\projectNEKO\dsh-companion-memory\PLAN.md 的 DM01—DM06 实施本机记忆专项，目标为用户升级后的 Windows DSH 0.2.1-rc.3，与 E:\dsh\plugins\dsh-qq-bridge 共存。复用当前记忆服务、管理台和客户端合同，完成统一人格、召回、保存、更正删除、历史清理和恢复。之后再推进本文 Q03/Q04 后台任务、Q05 Linux 与整体 Q06。账号和桌面操作由用户完成；记忆数据可清空重来，人格卡不重建；状态只回填 roadmap。
+> 先按 F:\game\projectNEKO\dsh-rin-memory\PLAN.md 的 DM01—DM06 实施本机记忆专项，目标为用户升级后的 Windows DSH 0.2.1-rc.3，与 E:\dsh\plugins\dsh-qq-bridge 共存。复用当前记忆服务、管理台和客户端合同，完成统一人格、召回、保存、更正删除、历史清理和恢复。之后再推进本文 Q03/Q04 后台任务、Q05 Linux 与整体 Q06。账号和桌面操作由用户完成；记忆数据可清空重来，人格卡不重建；状态只回填 roadmap。

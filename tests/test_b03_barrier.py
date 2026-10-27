@@ -13,18 +13,18 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import DeletionRequest, MemoryEvent, Scope
-from companion_memory.domain.barrier import DeletionBarrier
-from companion_memory.errors import BarrierStaleError, CorruptStoreError
-from companion_memory.invalidation import text_hash
-from companion_memory.persistence.atomic import FileSystemAtomicStore
-from companion_memory.persistence.corrections import CorrectionStore
-from companion_memory.persistence.deletions import DeletionStore
-from companion_memory.persistence.permits import NullWritePermit
-from companion_memory.persistence.records import event_snapshot
-from companion_memory.persistence.roots import FileSystemRoots
-from companion_memory.persistence.tombstones import ScopedTombstoneStore
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import DeletionRequest, MemoryEvent, Scope
+from rin_memory.domain.barrier import DeletionBarrier
+from rin_memory.errors import BarrierStaleError, CorruptStoreError
+from rin_memory.invalidation import text_hash
+from rin_memory.persistence.atomic import FileSystemAtomicStore
+from rin_memory.persistence.corrections import CorrectionStore
+from rin_memory.persistence.deletions import DeletionStore
+from rin_memory.persistence.permits import NullWritePermit
+from rin_memory.persistence.records import event_snapshot
+from rin_memory.persistence.roots import FileSystemRoots
+from rin_memory.persistence.tombstones import ScopedTombstoneStore
 
 
 class FixedClock:

@@ -2,7 +2,7 @@
 
 日期：2026-10-27。本文整合前面的 QQ 对话链路排查、四条记忆链路讨论、明确教导与模仿学习需求，并对照公开的陪伴产品、记忆框架和研究设计。
 
-**推荐保留现有 companion-memory 核心，补齐“明确教导立即采用、共同经历持续积累、自主认识逐步成熟、相关记忆改变当前行为”四件事。** 检索采用分层上下文与混合召回；向量用于补足语义关联。养成的主要载体应是有来源的相处规则、共同经历、关系变化和持续兴趣，再由其中稳定的部分修订人格卡。
+**推荐保留现有 rin-memory 核心，补齐“明确教导立即采用、共同经历持续积累、自主认识逐步成熟、相关记忆改变当前行为”四件事。** 检索采用分层上下文与混合召回；向量用于补足语义关联。养成的主要载体应是有来源的相处规则、共同经历、关系变化和持续兴趣，再由其中稳定的部分修订人格卡。
 
 本文是新的语义设计与实施依据；工作包状态继续只在 [roadmap](roadmap.md) §2.6 维护。传输、输出保存与发布流程沿用 [陪伴连续性实施方案](companion-continuity-plan.md)，远程宿主采用 [远程记忆宿主方案](remote-memory-host-plan.md)。本文对“明确教导快速采用”的规定，补充并细化旧方案中的反馈与演化规则。
 
@@ -65,7 +65,7 @@ DSH 已有固定人格、主对话与后台任务分工、动态背景去重，�
 
 ### 3.2 需要优先处理的具体问题
 
-以下来自当前本机代码阅读与临时根定向复现，路径均相对 companion-memory；DSH 路径另行标明。
+以下来自当前本机代码阅读与临时根定向复现，路径均相对 rin-memory；DSH 路径另行标明。
 
 | 环节 | 当前行为与问题 | 对养成与陪伴的影响 | 推荐修正 |
 |---|---|---|---|
@@ -490,13 +490,13 @@ Hindsight 的多路融合可作为结构参考：[retrieval](https://hindsight.v
 
 | 目标 | 本机模块 |
 |---|---|
-| 提炼窗口、来源合并、时间锚点、证据类型 | src/companion_memory/domain/extraction.py；domain/turns.py；contracts.py |
+| 提炼窗口、来源合并、时间锚点、证据类型 | src/rin_memory/domain/extraction.py；domain/turns.py；contracts.py |
 | 主题反思、独立支持、反证与条件策略 | domain/reflection.py；persistence/reflections.py |
 | 演化证据合同、范围与成熟资格 | adapters/composition.py；domain/evolution.py；domain/evolution_scheduler.py |
 | 明确教导、局部修订与发布 | domain/persona_card.py；domain/persona_publish.py；service/server.py；现有权限与事件存储 |
 | 工作摘要、事项和经历投影 | domain/state.py；现有 StateService / StateStore；domain/recall.py |
 | 分层召回和固定快照 | domain/recall.py；service/protocol.py；service/server.py；ports.py |
-| DSH 请求与实际注入、教导消费 | F:/game/projectNEKO/dsh-companion-memory/index.js；memory-client.js |
+| DSH 请求与实际注入、教导消费 | F:/game/projectNEKO/dsh-rin-memory/index.js；memory-client.js |
 | 自发输出、因果与发送回执 | E:/dsh/plugins/dsh-qq-bridge/src/plugin.ts；src/handlers/agent.ts；src/handlers/dsh-executor.ts |
 
 状态读写直接复用 domain/state.py 与 persistence/state.py 中的现有服务和存储。
@@ -524,8 +524,8 @@ MC04-T 只依赖必要来源、现有人格修订发布和客户端消费，可�
 
 2026-10-27 的本机源码基线：
 
-- companion-memory 已有首次提交 9725445，origin 为 lxl8182/companion-memory。
-- dsh-companion-memory 已有独立仓库，origin 为 lxl8182/dsh-companion-memory。
+- rin-memory 已有首次提交 9725445，origin 为 lxl8182/rin-memory。
+- dsh-rin-memory 已有独立仓库，origin 为 lxl8182/dsh-rin-memory。
 - dsh-qq-bridge 已有自己的 lxl8182/dsh-qq-bridge 远端，并保留原作者 upstream。
 
 旧连续性方案 §3.2 描述的是建仓前快照；后续接手直接检查当前 Git 与打包条件。MC00 的完成仍以版本发布闭环为准。

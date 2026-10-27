@@ -683,7 +683,7 @@ def _outcome_payload(outcome: TurnOutcome) -> dict[str, Any]:
 class MemoryRequestHandler(BaseHTTPRequestHandler):
     """Thin JSON transport over `MemoryApi`."""
 
-    server_version = "companion-memory/0.1"
+    server_version = "rin-memory/0.1"
     protocol_version = "HTTP/1.1"
 
     api: MemoryApi  # injected on the server class
@@ -1013,17 +1013,17 @@ class MemoryRequestHandler(BaseHTTPRequestHandler):
 def _ui_resource(*parts: str):
     """Locate one management-UI file, installed first then from the source tree.
 
-    The wheel ships the watercolour page under `companion_memory/webui`; a
+    The wheel ships the watercolour page under `rin_memory/webui`; a
     source checkout has it under `webui/designs/tidebell` and carries no packaged
     copy. Resolving both keeps `stack.ps1 start` usable from the repository
     (which is what one-click launch does) without weakening the packaging check
     `stack.py` performs for a real install. Returns None when neither exists.
     """
-    packaged = files("companion_memory").joinpath("webui", *parts)
+    packaged = files("rin_memory").joinpath("webui", *parts)
     if packaged.is_file():
         return packaged
     try:
-        # `.../src/companion_memory/service/server.py` -> repository root.
+        # `.../src/rin_memory/service/server.py` -> repository root.
         repo = Path(__file__).resolve().parents[3]
     except IndexError:  # pragma: no cover - defensive
         return None

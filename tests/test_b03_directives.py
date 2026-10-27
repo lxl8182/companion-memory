@@ -6,14 +6,14 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from companion_memory.errors import (
+from rin_memory.errors import (
     CorruptStoreError, InvalidSchemaError, WriteRejected,
 )
-from companion_memory.persistence import (
+from rin_memory.persistence import (
     FileSystemAtomicStore, FileSystemRoots, NullWritePermit,
     RejectingWritePermit,
 )
-from companion_memory.persistence.directives import (
+from rin_memory.persistence.directives import (
     DEFAULT_TTL_MAX_SECONDS, DEFAULT_TTL_SECONDS, DIRECTIVES_FILENAME,
     DIRECTIVES_SCHEMA, UserDirectiveStore,
 )

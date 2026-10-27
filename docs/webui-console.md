@@ -27,7 +27,7 @@ N.E.K.O 文字接线已启用。模板默认 `host.enabled=false`；填写 `host
 
 重复 start 返回同一实例。端口被其他进程占用时直接报 `service.port` 冲突。启动失败查 `logs/memory-service.log`；status 显示配置、根、PID、实例、各能力与积压。停止先关闭 HTTP 入口、排空工作及维护循环，再释放根锁并写 `state/stack.json` 的退出结果。无法联系的实例返回 unreachable，启动器不会凭旧 PID 结束无关进程。
 
-服务从已安装的 wheel 加载 HTML、JS、CSS、图片，子进程工作目录在新 state 根；无需源码目录。`tools/stack.ps1 -Python <解释器>` 和安装命令 `companion-stack` 支持其他明确的安装位置。开发用 `webui/server.py --demo` 继续用于隔离样稿/接口测试，不作为新系统日常入口。
+服务从已安装的 wheel 加载 HTML、JS、CSS、图片，子进程工作目录在新 state 根；无需源码目录。`tools/stack.ps1 -Python <解释器>` 和安装命令 `rin-stack` 支持其他明确的安装位置。开发用 `webui/server.py --demo` 继续用于隔离样稿/接口测试，不作为新系统日常入口。
 
 ## 2. 服务管理合同
 

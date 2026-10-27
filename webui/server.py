@@ -92,8 +92,8 @@ class StartupError(Exception):
         self.code = code
 
 
-from companion_memory.service.console import RinApp as ConsoleApp, ApiError
-from companion_memory.service.listening import ExclusiveAddrMixin
+from rin_memory.service.console import RinApp as ConsoleApp, ApiError
+from rin_memory.service.listening import ExclusiveAddrMixin
 
 
 class RinApp(ConsoleApp):
@@ -405,7 +405,7 @@ def _model_settings(args: argparse.Namespace):
     The credential is never a flag value: `--model-api-key-env` names the
     environment variable, exactly like the service's own configuration.
     """
-    from companion_memory.adapters.model_http import (
+    from rin_memory.adapters.model_http import (
         HttpModelInvoker, ModelSettings,
     )
 
@@ -436,8 +436,8 @@ def _build_chat(core, *, character: str, root: Path, writable: bool, demo: bool,
     without a provider. A read-only console still gets a bridge: it serves the
     committed transcript and reports why sending is refused.
     """
-    from companion_memory.service.chat import ChatBridge, DemoChatModel
-    from companion_memory.service.memory_service import ServiceSettings
+    from rin_memory.service.chat import ChatBridge, DemoChatModel
+    from rin_memory.service.memory_service import ServiceSettings
 
     demo_model = model is None and demo
     if demo_model:

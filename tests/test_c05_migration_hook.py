@@ -21,7 +21,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
+from rin_memory.adapters.composition import build_memory_core
 
 
 class MigrationHookTests(unittest.TestCase):

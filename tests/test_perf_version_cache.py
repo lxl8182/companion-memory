@@ -20,10 +20,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.errors import CorruptStoreError, InvalidSchemaError
-from companion_memory.persistence import roots as roots_module
-from companion_memory.persistence.roots import FileSystemRoots
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.errors import CorruptStoreError, InvalidSchemaError
+from rin_memory.persistence import roots as roots_module
+from rin_memory.persistence.roots import FileSystemRoots
 
 
 class VersionCacheTests(unittest.TestCase):

@@ -1,9 +1,9 @@
-"""Standalone entry point for companion-memory (B07/B14).
+"""Standalone entry point for rin-memory (B07/B14).
 
 Commands, all offline and host-independent:
 
 * demo          - the ten-section in-process demonstration from
-  companion_memory.__main__ (fixed doubles, no network, temp data roots);
+  rin_memory.__main__ (fixed doubles, no network, temp data roots);
 * run           - one explicit data root and character: validate the root, take
   the root ownership lock (S01), build the core, recover the journal tail, then
   run one maintenance round (--once) or the loop (--loop);
@@ -53,7 +53,7 @@ EXIT_USAGE = 2
 EXIT_LOCKED = 3
 
 #: One writer per character directory. The file holds pid + timestamp + character.
-LOCK_FILENAME = ".companion_memory.writer.lock"
+LOCK_FILENAME = ".rin_memory.writer.lock"
 #: Path segments that identify real user data / the host checkout.
 _FORBIDDEN_SEGMENTS = frozenset({"nekodata", "documents", "n.e.k.o"})
 #: Substrings that always identify real user data.
@@ -636,7 +636,7 @@ def _run_package_check() -> dict[str, Any]:
             "reason": "uv is not available on PATH; wheel build/install smoke skipped",
         }
     package_root = Path(__file__).resolve().parents[2]
-    workdir = Path(tempfile.mkdtemp(prefix="companion-memory-package-"))
+    workdir = Path(tempfile.mkdtemp(prefix="rin-memory-package-"))
     env = dict(os.environ)
     env["UV_OFFLINE"] = "1"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -674,10 +674,10 @@ def _run_package_check() -> dict[str, Any]:
                 "ok": False, "status": "failed", "stage": "contents",
                 "reason": f"wheel contains forbidden paths: {forbidden[:5]}",
             }
-        if not any(name.startswith("companion_memory/") for name in names):
+        if not any(name.startswith("rin_memory/") for name in names):
             return {
                 "ok": False, "status": "failed", "stage": "contents",
-                "reason": "wheel does not contain the companion_memory package",
+                "reason": "wheel does not contain the rin_memory package",
             }
         venv_dir = workdir / "venv"
         venv = subprocess.run(
@@ -704,8 +704,8 @@ def _run_package_check() -> dict[str, Any]:
             }
         import_smoke = subprocess.run(
             [str(python), "-c",
-             "import companion_memory; from companion_memory.cli import build_parser; "
-             "print('import-ok', companion_memory.__version__ if hasattr(companion_memory, '__version__') else 'no-version')"],
+             "import rin_memory; from rin_memory.cli import build_parser; "
+             "print('import-ok', rin_memory.__version__ if hasattr(rin_memory, '__version__') else 'no-version')"],
             cwd=str(workdir), capture_output=True, text=True,
             timeout=120, env=env,
         )
@@ -715,7 +715,7 @@ def _run_package_check() -> dict[str, Any]:
                 "reason": (import_smoke.stderr or import_smoke.stdout or "").strip()[-800:],
             }
         demo = subprocess.run(
-            [str(python), "-m", "companion_memory"],
+            [str(python), "-m", "rin_memory"],
             cwd=str(workdir), capture_output=True, text=True,
             timeout=300, env=env,
         )

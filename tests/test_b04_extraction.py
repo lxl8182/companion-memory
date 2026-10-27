@@ -14,9 +14,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import DeletionRequest, Scope, Scene
-from companion_memory.domain.extraction import ExtractionSettings
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import DeletionRequest, Scope, Scene
+from rin_memory.domain.extraction import ExtractionSettings
 
 
 class FixedClock:

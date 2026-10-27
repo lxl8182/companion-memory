@@ -73,7 +73,7 @@ flowchart LR
 
 ### 构建与启动
 
-需要 Python 3.11+ 和 uv 构建工具。当前发行包为 `rin-memory 0.1.0.dev7`，核心运行依赖为零。
+需要 Python 3.11+ 和 uv 构建工具。当前发行包为 `rin-memory 0.1.0.dev8`，核心运行依赖为零。
 
 ```bash
 git clone https://github.com/lxl8182/rin-memory.git
@@ -85,7 +85,7 @@ python -m venv .venv
 激活虚拟环境：Windows PowerShell 使用 `.\.venv\Scripts\Activate.ps1`；Linux / macOS 使用 `source .venv/bin/activate`。随后安装并初始化：
 
 ```bash
-pip install dist/rin_memory-0.1.0.dev7-py3-none-any.whl
+pip install dist/rin_memory-0.1.0.dev8-py3-none-any.whl
 rin-stack init --config ./runtime/config/stack.toml
 ```
 
@@ -103,18 +103,20 @@ rin-stack stop --config ./runtime/config/stack.toml
 
 常用接口包括 `/v1/context`（人格与记忆上下文）、`/v1/turns`（完整轮次提交）、`/v1/persona/teach`（明确教导）、`/v1/outputs`（助手输出与投递回执）和 `/v1/proactive/*`（主动候选消费）。接口按身份、主体和能力授权，详细约定见 [管理台与客户端合同](docs/webui-console.md)。
 
-### 从旧项目名升级
+### 命名与升级
 
-仓库和 Python 发行包由 `companion-memory` 更名为 `rin-memory`。在既有虚拟环境升级时，先卸载旧发行包，再安装新的 wheel，避免两个发行包共同持有同一组模块。
+仓库目录为 `rin-memory`，Python 发行包为 `rin-memory`，导入路径为 `rin_memory`；DSH 接入目录为 `dsh-rin-memory`。命令统一为 `rin-memory`、`rin-memory-run`、`rin-stack`。
 
-Python 导入路径 `companion_memory`、旧 CLI 命令别名、HTTP 合同、数据来源键及既有运行根继续兼容；新的启动命令为 `rin-stack`。升级时将运行配置中的 `runtime.package_version` 更新为安装版本。既有角色与记忆可继续使用。
+升级时安装新的 wheel，并同步更新启动脚本、Python 导入及配置中的解释器路径和 `runtime.package_version`。已有数据与 HTTP 合同继续使用。
+
+当前部署采用固定 Git 提交与手动发布；推送到 GitHub 后，服务器不会自动拉取或重启。部署时需要同步提交、安装对应版本并检查服务状态。
 
 ## 项目与文档
 
 | 内容 | 位置 |
 |---|---|
-| 领域核心与存储 | `src/companion_memory/domain/`、`persistence/` |
-| 独立服务与接口 | `src/companion_memory/service/` |
+| 领域核心与存储 | `src/rin_memory/domain/`、`persistence/` |
+| 独立服务与接口 | `src/rin_memory/service/` |
 | 水彩管理台 | `webui/designs/tidebell/` |
 | DSH 接入端 | [dsh-rin-memory](https://github.com/lxl8182/dsh-rin-memory) |
 | 设计与养成链路 | [companion-growth-design.md](docs/companion-growth-design.md) |

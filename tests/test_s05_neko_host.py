@@ -9,9 +9,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from companion_memory.service.memory_service import MemoryService, ServiceSettings
-from companion_memory.service.management import ManagementApi
-from companion_memory.service.server import ApiError, MemoryApi
+from rin_memory.service.memory_service import MemoryService, ServiceSettings
+from rin_memory.service.management import ManagementApi
+from rin_memory.service.server import ApiError, MemoryApi
 
 
 class NekoHostTests(unittest.TestCase):

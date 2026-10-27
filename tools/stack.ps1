@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-Initialize, start, stop, or inspect the new companion-memory instance.
+Initialize, start, stop, or inspect the new rin-memory instance.
 .EXAMPLE
 .\tools\stack.ps1 init -Config F:\game\projectNEKO\companion-runtime\config\stack.toml
 .EXAMPLE
@@ -24,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw 'Install the wheel into .venv first, or pass -Python with an explicit installed interpreter.'
 }
-$stackArgs = @('-m', 'companion_memory.stack', $Action, '--config', $Config)
+$stackArgs = @('-m', 'rin_memory.stack', $Action, '--config', $Config)
 if ($NoOpen) { $stackArgs += '--no-open' }
 & $Python @stackArgs
 exit $LASTEXITCODE

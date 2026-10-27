@@ -14,8 +14,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.domain.persona import PERSONA_ENTRY_EVENT
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.domain.persona import PERSONA_ENTRY_EVENT
 
 
 class FixedClock:

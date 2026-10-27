@@ -24,9 +24,9 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.domain.barrier import message_text
-from companion_memory.domain.extraction import ExtractionSettings
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.domain.barrier import message_text
+from rin_memory.domain.extraction import ExtractionSettings
 
 #: Chinese + full-width punctuation + an em dash pair + emoji.
 SAMPLE = "她喜欢乌龙茶🥤，说“下次再聊”——记得提醒我！"
@@ -130,7 +130,7 @@ class ChineseChainTests(unittest.IsolatedAsyncioTestCase):
             "from pathlib import Path\n"
             "sys.path.insert(0, sys.argv[1])\n"
             "sys.stdout.reconfigure(errors='strict')\n"
-            "from companion_memory.adapters.composition import build_memory_core\n"
+            "from rin_memory.adapters.composition import build_memory_core\n"
             "root = Path(tempfile.mkdtemp()) / 'memory'\n"
             "core = build_memory_core(memory_root=root)\n"
             "core.recent.append('demo', [{'type': 'human', 'data': {'content': sys.argv[2]}}])\n"

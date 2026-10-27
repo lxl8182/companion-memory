@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from companion_memory.service.management import ManagementApi
-from companion_memory.service.memory_service import MemoryService, ServiceSettings
+from rin_memory.service.management import ManagementApi
+from rin_memory.service.memory_service import MemoryService, ServiceSettings
 if __package__:
     from .test_b12_evolution import FakeModel, INITIAL, PROPOSAL
 else:

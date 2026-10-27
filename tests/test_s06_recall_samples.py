@@ -16,9 +16,9 @@ import sys
 import unittest
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import DeletionRequest, DeletionTarget, Scene, Scope
-from companion_memory.persistence.facts_view import FactsView
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import DeletionRequest, DeletionTarget, Scene, Scope
+from rin_memory.persistence.facts_view import FactsView
 
 TOOLS = Path(__file__).resolve().parents[1] / "tools"
 if str(TOOLS) not in sys.path:

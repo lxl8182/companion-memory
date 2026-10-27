@@ -36,8 +36,8 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import DeletionRequest, DeletionTarget, Scope
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import DeletionRequest, DeletionTarget, Scope
 from s06_samples import FIXED_NOW, RecallCase, build_cases
 
 
@@ -169,7 +169,7 @@ async def run_case(case: RecallCase, *, repeat: int = 3) -> dict[str, Any]:
 def _scene_of(case: RecallCase):
     if not case.scene:
         return None
-    from companion_memory.contracts import Scene
+    from rin_memory.contracts import Scene
 
     return Scene(**dict(case.scene))
 

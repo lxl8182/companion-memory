@@ -7,15 +7,15 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.errors import (
+from rin_memory.errors import (
     CorruptStoreError, InvalidSchemaError, WriteRejected,
 )
-from companion_memory.persistence import (
+from rin_memory.persistence import (
     FileSystemAtomicStore, FileSystemRoots, NullWritePermit, RejectingWritePermit,
     SystemClock,
 )
-from companion_memory.persistence.facts_view import FactsView
-from companion_memory.persistence.timeindex import TimeIndexStore
+from rin_memory.persistence.facts_view import FactsView
+from rin_memory.persistence.timeindex import TimeIndexStore
 
 
 class _RecordingStore:

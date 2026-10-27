@@ -12,18 +12,18 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from companion_memory.contracts import MemoryEvent, Scope
-from companion_memory.errors import (
+from rin_memory.contracts import MemoryEvent, Scope
+from rin_memory.errors import (
     CorruptStoreError, InvalidSchemaError, SourceConflictError, WriteRejected,
 )
-from companion_memory.persistence.atomic import FileSystemAtomicStore
-from companion_memory.persistence.clock import SystemClock
-from companion_memory.persistence.idempotency import IdempotencyStore
-from companion_memory.persistence.permits import NullWritePermit, RejectingWritePermit
-from companion_memory.persistence.records import event_fingerprint, event_snapshot
-from companion_memory.persistence.roots import FileSystemRoots
-from companion_memory.persistence.source_ledger import SourceLedger
-from companion_memory.persistence.tombstones import ScopedTombstoneStore, TombstoneState
+from rin_memory.persistence.atomic import FileSystemAtomicStore
+from rin_memory.persistence.clock import SystemClock
+from rin_memory.persistence.idempotency import IdempotencyStore
+from rin_memory.persistence.permits import NullWritePermit, RejectingWritePermit
+from rin_memory.persistence.records import event_fingerprint, event_snapshot
+from rin_memory.persistence.roots import FileSystemRoots
+from rin_memory.persistence.source_ledger import SourceLedger
+from rin_memory.persistence.tombstones import ScopedTombstoneStore, TombstoneState
 
 
 def make_event(

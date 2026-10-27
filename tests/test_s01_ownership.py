@@ -23,9 +23,9 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from companion_memory.cli import main as cli_main
-from companion_memory.errors import RootLockConflict
-from companion_memory.persistence.ownership import (
+from rin_memory.cli import main as cli_main
+from rin_memory.errors import RootLockConflict
+from rin_memory.persistence.ownership import (
     ROOT_LOCK_FILENAME,
     acquire_root_lock,
     canonical_root,
@@ -72,8 +72,8 @@ class RootLockTests(unittest.TestCase):
             import json, sys
             from pathlib import Path
             sys.path.insert(0, sys.argv[1])
-            from companion_memory.errors import RootLockConflict
-            from companion_memory.persistence.ownership import acquire_root_lock
+            from rin_memory.errors import RootLockConflict
+            from rin_memory.persistence.ownership import acquire_root_lock
             try:
                 lock = acquire_root_lock(Path(sys.argv[2]), mode="standalone")
             except RootLockConflict as exc:
@@ -105,7 +105,7 @@ class RootLockTests(unittest.TestCase):
             import json, sys
             from pathlib import Path
             sys.path.insert(0, sys.argv[1])
-            from companion_memory.persistence.ownership import acquire_root_lock
+            from rin_memory.persistence.ownership import acquire_root_lock
             lock = acquire_root_lock(Path(sys.argv[2]), mode="cli")
             print(json.dumps({"acquired": True}))
             lock.release()

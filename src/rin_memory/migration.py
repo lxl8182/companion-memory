@@ -66,13 +66,13 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 #: Current core data version written by this build.
 CORE_DATA_VERSION = 1
 #: Root-level marker written by a successful migration (hidden dot-file).
-MANIFEST_FILENAME = ".companion_memory_manifest.json"
+MANIFEST_FILENAME = ".rin_memory_manifest.json"
 #: Backup manifest name (inside the backup root, outside the payload copy).
 BACKUP_MANIFEST_FILENAME = "backup_manifest.json"
 #: Backup payload directory (an exact copy of memory_root).
 PAYLOAD_DIRNAME = "payload"
 #: Single-writer lock is never copied or migrated.
-LOCK_FILENAME = ".companion_memory.writer.lock"
+LOCK_FILENAME = ".rin_memory.writer.lock"
 _SQLITE_HEADER = b"SQLite format 3\x00"
 
 STATUS_ABSENT = "absent"
@@ -82,7 +82,7 @@ STATUS_UNKNOWN = "unknown"
 STATUS_CORRUPT = "corrupt"
 
 _RECOVERY_HINT_UNKNOWN = (
-    "refusing to downgrade: run the newer companion-memory build, or restore "
+    "refusing to downgrade: run the newer rin-memory build, or restore "
     "a verified backup created before the upgrade"
 )
 _RECOVERY_HINT_CORRUPT = (
@@ -633,7 +633,7 @@ class DataFormatManifest:
                 spec.name, spec.filename, str(path), STATUS_LEGACY,
                 version=version,
                 detail=f"version {version} needs migration to {spec.current_version}",
-                hint="run companion-memory migrate --memory-root <root>",
+                hint="run rin-memory migrate --memory-root <root>",
                 counts=counts,
             )
         return StorageStatus(
@@ -685,13 +685,13 @@ class DataFormatManifest:
                 spec.name, spec.filename, str(path), STATUS_LEGACY,
                 version=0,
                 detail="legacy event-id sentinel without a position; migrate to full replay",
-                hint="run companion-memory migrate --memory-root <root>",
+                hint="run rin-memory migrate --memory-root <root>",
             )
         if not value:
             return StorageStatus(
                 spec.name, spec.filename, str(path), STATUS_LEGACY, version=0,
                 detail="empty sentinel; migrate to position -1",
-                hint="run companion-memory migrate --memory-root <root>",
+                hint="run rin-memory migrate --memory-root <root>",
             )
         return StorageStatus(
             spec.name, spec.filename, str(path), STATUS_CORRUPT,
@@ -731,7 +731,7 @@ class DataFormatManifest:
                     spec.name, spec.filename, str(path), STATUS_LEGACY,
                     version=0,
                     detail="host database without schema_meta; additive migration required",
-                    hint="run companion-memory migrate --memory-root <root>",
+                    hint="run rin-memory migrate --memory-root <root>",
                 )
             row = connection.execute(
                 "SELECT value FROM schema_meta WHERE key = 'schema_version'",
@@ -769,7 +769,7 @@ class DataFormatManifest:
             return StorageStatus(
                 spec.name, spec.filename, str(path), STATUS_LEGACY,
                 version=version, detail="time index version needs migration",
-                hint="run companion-memory migrate --memory-root <root>",
+                hint="run rin-memory migrate --memory-root <root>",
             )
         return StorageStatus(
             spec.name, spec.filename, str(path), STATUS_OK,

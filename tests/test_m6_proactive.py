@@ -36,8 +36,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.domain.proactive import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.domain.proactive import (
     DISPATCH_ABSORBED,
     DISPATCH_DEFER,
     DISPATCH_IDLE,
@@ -234,7 +234,7 @@ class SourceRequiredTests(ProactiveBase):
         core = self.build()
         core.recover("rin")
         self.seed_thread(core)
-        from companion_memory.contracts import DeletionRequest, DeletionTarget, Scope
+        from rin_memory.contracts import DeletionRequest, DeletionTarget, Scope
 
         receipt = await core.deletion_service.forget(DeletionRequest(
             scope=Scope("rin", "private"), mode="entry",
@@ -599,7 +599,7 @@ class DispatchAndRecheckTests(ProactiveBase):
         core = self.build()
         core.recover("rin")
         candidate_id = self._ordinary(core)
-        from companion_memory.contracts import DeletionRequest, Scope
+        from rin_memory.contracts import DeletionRequest, Scope
 
         await core.deletion_service.forget(DeletionRequest(
             scope=Scope("rin", "private"), mode="entry",
@@ -866,7 +866,7 @@ class UserBoundaryTests(ProactiveBase):
         self.assertEqual(refused.reason, "mention_restricted")
 
     async def test_forgetting_is_a_real_deletion(self):
-        from companion_memory.contracts import DeletionRequest, DeletionTarget, Scope
+        from rin_memory.contracts import DeletionRequest, DeletionTarget, Scope
 
         core = self.build()
         core.recover("rin")
@@ -917,8 +917,8 @@ class MaintenanceWiringTests(ProactiveBase):
         self.assertEqual(len(core.proactive_service.candidates("rin")), 1)
 
     async def test_the_step_can_be_disabled(self):
-        from companion_memory.adapters.composition import build_memory_core
-        from companion_memory.domain.maintenance import MaintenanceSettings
+        from rin_memory.adapters.composition import build_memory_core
+        from rin_memory.domain.maintenance import MaintenanceSettings
 
         core = build_memory_core(
             memory_root=self.root / "off",

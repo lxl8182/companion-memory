@@ -1,6 +1,6 @@
 # S05：N.E.K.O 人格设置、运行状态与文字主动交流接手计划
 
-日期：2026-10-24。执行范围：`F:\game\projectNEKO` 工作区中的 `companion-memory` 与 `N.E.K.O`。
+日期：2026-10-24。执行范围：`F:\game\projectNEKO` 工作区中的 `rin-memory` 与 `N.E.K.O`。
 
 本计划用于交给后续 agent 直接开发。目标是补齐已经接通的 N.E.K.O 文字端：用户在宿主修改的人格与铃芽一致，能看懂连接和保存状态，小潮主动发文字时也使用同一份人格和记忆。
 
@@ -36,9 +36,9 @@
 | 内容 | 位置/值 |
 |---|---|
 | 工作区规则 | `F:\game\projectNEKO\AGENTS.md` |
-| 核心接手规则 | `F:\game\projectNEKO\companion-memory\AGENTS.md` |
+| 核心接手规则 | `F:\game\projectNEKO\rin-memory\AGENTS.md` |
 | 宿主开发规则 | `F:\game\projectNEKO\N.E.K.O\.agent\rules\neko-guide.md` |
-| 核心项目 | `F:\game\projectNEKO\companion-memory` |
+| 核心项目 | `F:\game\projectNEKO\rin-memory` |
 | 宿主项目 | `F:\game\projectNEKO\N.E.K.O` |
 | 日常配置 | `F:\game\projectNEKO\companion-runtime\config\stack.toml` |
 | 独立服务/管理台 | `http://127.0.0.1:48931` |
@@ -47,7 +47,7 @@
 | 宿主启动配置 | 上述 host 根中的 `companion_host.json`，含本机凭据，不输出全文 |
 | 宿主队列 | 上述 host 根中的 `state\memory_uploads.json`，可能含原文，不输出全文 |
 | 稳定角色/主体/客户端 | `companion` / `private` / `neko-desktop`，以实际配置为准 |
-| 核心解释器 | `companion-memory\.venv\Scripts\python.exe` |
+| 核心解释器 | `rin-memory\.venv\Scripts\python.exe` |
 | 宿主解释器 | `N.E.K.O\.venv\Scripts\python.exe`，开发命令使用 `uv run --no-sync python ...` |
 | 当前安装包 | `0.1.0.dev2`；部署时核对实际安装版本及配置版本 |
 | 当前模型 | `deepseek-v4.1-flash`；复用配置，不写死到业务逻辑 |
@@ -85,7 +85,7 @@ N.E.K.O 的人格设置显示铃芽中的当前段落、草稿 revision 和已�
 |---|---|
 | N.E.K.O | `main_routers/characters_router/cards.py`、`persona.py`；`main_logic/engine_persona.py`、`remote_memory.py`、`remote_memory_router.py` |
 | N.E.K.O 前端 | `templates/character_card_manager.html`；`static/js/character_card_manager/card-form-and-actions.js`、`character-data-and-transfer.js` 及实际负责该保存行为的模块；`character_personality_onboarding.js` 按入口影响修改 |
-| companion-memory | `service/management.py`、`server.py`、`stack_config.py`、`host.py`；复用 `domain/persona_card.py`、`persona_admin.py`、`persona_publish.py` 的既有业务方法 |
+| rin-memory | `service/management.py`、`server.py`、`stack_config.py`、`host.py`；复用 `domain/persona_card.py`、`persona_admin.py`、`persona_publish.py` 的既有业务方法 |
 
 ### 4.3 实现步骤
 
@@ -208,7 +208,7 @@ N.E.K.O 的人格设置显示铃芽中的当前段落、草稿 revision 和已�
 示例命令（从对应项目目录运行，选取相关项，不是每次全跑）：
 
 ```powershell
-# companion-memory 源码定向检查
+# rin-memory 源码定向检查
 $env:PYTHONPATH = 'src'
 .venv\Scripts\python.exe -m unittest tests.test_s05_neko_host -q
 
@@ -237,4 +237,4 @@ uv run --no-sync python -m pytest tests/unit/test_proactive_delivery.py -q
 
 ## 8. 可直接发给执行 agent 的任务
 
-> 请在 `F:\game\projectNEKO` 按 `companion-memory\docs\s05-neko-host-next-plan.md` 顺序实现 S05-H01、H02、H03：统一 N.E.K.O 与铃芽的人格设置，补齐真实连接和逐轮保存状态，再接通使用同一人格与记忆的文字主动交流。先读根 AGENTS、核心 AGENTS、宿主开发规则和 roadmap，复用当前已经接通的文字链路及持久队列。人格卡保留不重建（只能经服务正常编辑/发布/演化修改），其余记忆、配置、角色身份和演化模式可随意清空或调整；不恢复旧 C06、旧数据迁移或内嵌核心。TTS/麦克风/屏幕观察/主动交流等开关按验证需要设置。先完成定向验证，再按新 stack 部署日常实例并做必要的页面/重启检查。完成后更新 roadmap 和受影响的既有文档。QQ/DSH、实时语音、游戏、旧入口退役不在本批范围。不要只给方案或只改接口就结束，按本文完成条件交付可用结果。
+> 请在 `F:\game\projectNEKO` 按 `rin-memory\docs\s05-neko-host-next-plan.md` 顺序实现 S05-H01、H02、H03：统一 N.E.K.O 与铃芽的人格设置，补齐真实连接和逐轮保存状态，再接通使用同一人格与记忆的文字主动交流。先读根 AGENTS、核心 AGENTS、宿主开发规则和 roadmap，复用当前已经接通的文字链路及持久队列。人格卡保留不重建（只能经服务正常编辑/发布/演化修改），其余记忆、配置、角色身份和演化模式可随意清空或调整；不恢复旧 C06、旧数据迁移或内嵌核心。TTS/麦克风/屏幕观察/主动交流等开关按验证需要设置。先完成定向验证，再按新 stack 部署日常实例并做必要的页面/重启检查。完成后更新 roadmap 和受影响的既有文档。QQ/DSH、实时语音、游戏、旧入口退役不在本批范围。不要只给方案或只改接口就结束，按本文完成条件交付可用结果。

@@ -538,7 +538,7 @@ class MaintenanceService:
         stop_event = asyncio.Event()
         task = asyncio.create_task(
             self._loop(name, interval, max_rounds, stop_event),
-            name=f"companion-memory-maintenance:{name}",
+            name=f"rin-memory-maintenance:{name}",
         )
         self._tasks[name] = task
         self._stops[name] = stop_event

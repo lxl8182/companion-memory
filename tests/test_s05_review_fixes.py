@@ -19,17 +19,17 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.adapters.model_http import ModelCallError, ModelSettings
-from companion_memory.contracts import DeletionRequest, DeletionTarget, Scope
-from companion_memory.persistence.ownership import acquire_root_lock
-from companion_memory.errors import RootLockConflict
-from companion_memory.service.memory_service import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.adapters.model_http import ModelCallError, ModelSettings
+from rin_memory.contracts import DeletionRequest, DeletionTarget, Scope
+from rin_memory.persistence.ownership import acquire_root_lock
+from rin_memory.errors import RootLockConflict
+from rin_memory.service.memory_service import (
     MemoryService,
     ServiceClosing,
     ServiceSettings,
 )
-from companion_memory.service.server import ApiError, MemoryApi, build_server
+from rin_memory.service.server import ApiError, MemoryApi, build_server
 
 CARD = [
     {"section_id": "identity", "text": "你是一只猫娘。",
@@ -297,7 +297,7 @@ class R03Tests(ServiceCase):
         """A game-scoped fact is visible only when the query is in that scene."""
         service = self.start(ScriptedModel())
         self._seed_scoped_facts(service)
-        from companion_memory.contracts import Scene
+        from rin_memory.contracts import Scene
 
         host = asyncio.run(service.core.recall.recall_memory(
             "demo", "先防后攻", subject="private",
@@ -490,7 +490,7 @@ class R07Tests(ServiceCase):
     def test_no_cross_loop_semaphore_error_under_batches(self):
         """Every request runs on its own loop; the adapter must not care."""
         service = self.start()
-        from companion_memory.adapters.model_http import HttpModelInvoker
+        from rin_memory.adapters.model_http import HttpModelInvoker
 
         invoker = HttpModelInvoker(ModelSettings(
             base_url="http://127.0.0.1:1/v1",
@@ -530,7 +530,7 @@ class R07Tests(ServiceCase):
 
     def test_timeouts_never_exceed_the_configured_capacity(self):
         """A timed-out call keeps its slot until its worker actually ends."""
-        from companion_memory.adapters import model_http
+        from rin_memory.adapters import model_http
         import os
 
         release = threading.Event()

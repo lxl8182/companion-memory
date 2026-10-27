@@ -17,21 +17,21 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.errors import (
+from rin_memory.errors import (
     CorruptStoreError,
     UnregisteredEventTypeError,
     WriteRejected,
 )
-from companion_memory.persistence.atomic import FileSystemAtomicStore
-from companion_memory.persistence.clock import SystemClock
-from companion_memory.persistence.cursors import CursorStore
-from companion_memory.persistence.journal import EventJournal
-from companion_memory.persistence.outbox import OutboxStore
-from companion_memory.persistence.permits import (
+from rin_memory.persistence.atomic import FileSystemAtomicStore
+from rin_memory.persistence.clock import SystemClock
+from rin_memory.persistence.cursors import CursorStore
+from rin_memory.persistence.journal import EventJournal
+from rin_memory.persistence.outbox import OutboxStore
+from rin_memory.persistence.permits import (
     NullWritePermit,
     RejectingWritePermit,
 )
-from companion_memory.persistence.roots import FileSystemRoots
+from rin_memory.persistence.roots import FileSystemRoots
 
 _EVENT_TYPE = "core.source_recorded"
 

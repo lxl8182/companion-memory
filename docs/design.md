@@ -4,11 +4,11 @@
 
 本文是完整实施设计。2026-10-22 已创建本仓库的可运行框架；实际完成范围及接手任务见 AGENTS.md 和 README.md。本文描述的完整记忆抽离、迁移、宿主接入与自演化仍按阶段推进。
 
-具体执行顺序与进度统一见 [分批开发计划与后续扩展路线](F:/game/projectNEKO/companion-memory/docs/roadmap.md)：B00—B15 对应首版完整交付，O01—O05 对应体验优化，X01—X06 对应大型扩展。本文件定义架构与验收合同，roadmap 维护批次状态。
+具体执行顺序与进度统一见 [分批开发计划与后续扩展路线](F:/game/projectNEKO/rin-memory/docs/roadmap.md)：B00—B15 对应首版完整交付，O01—O05 对应体验优化，X01—X06 对应大型扩展。本文件定义架构与验收合同，roadmap 维护批次状态。
 
 **核心决定：建立独立记忆与人格演化项目；第一版作为 Python 包运行在 N.E.K.O 现有记忆运行时内。N.E.K.O 继续负责对话、实时语音、情绪分析、Live2D、表情、动作、口型、界面与插件调度。先完成行为兼容的抽离，再启用人设卡自演化。**
 
-项目暂用工作名 `companion-memory`，Python 包名 `companion_memory`。正式命名不影响接口及拆分方式。源码位置为 `F:\game\projectNEKO\companion-memory`，独立本地 Git 仓库。
+项目暂用工作名 `rin-memory`，Python 包名 `rin_memory`。正式命名不影响接口及拆分方式。源码位置为 `F:\game\projectNEKO\rin-memory`，独立本地 Git 仓库。
 
 **1. 最终效果与“无感”的具体含义**
 
@@ -66,7 +66,7 @@ flowchart TB
     C --> H
     H --> A[N.E.K.O 记忆适配器]
     A --> R[现有记忆运行时]
-    R --> E[companion-memory 独立核心包]
+    R --> E[rin-memory 独立核心包]
     E --> D[原有记忆数据与新人设版本]
     E --> X[人格、回忆、心情、修正、成长上下文]
     X --> H
@@ -97,11 +97,11 @@ flowchart TB
 建议结构如下，文件拆分随实际复用模块确定，不预建空扩展层：
 
 ```text
-companion-memory/
+rin-memory/
   pyproject.toml
   README.md
   LICENSE
-  src/companion_memory/
+  src/rin_memory/
     api.py                 # 对外引擎入口
     contracts.py           # 输入、输出、版本与回执
     memory/                # 事实、反思、检索、证据、经历与淡出
@@ -454,7 +454,7 @@ N.E.K.O 集成时继续使用配置解析出的 memory_dir，保留原角色目�
 
 **13. 分批实施与每批完成条件**
 
-下面保留 D0—D5 大阶段；实际开发按 [roadmap](F:/game/projectNEKO/companion-memory/docs/roadmap.md) 的 B01—B15 顺序进行。大阶段完成需要对应全部批次及必要验收通过。
+下面保留 D0—D5 大阶段；实际开发按 [roadmap](F:/game/projectNEKO/rin-memory/docs/roadmap.md) 的 B01—B15 顺序进行。大阶段完成需要对应全部批次及必要验收通过。
 
 | 阶段 | 工作内容 | 完成条件 |
 |---|---|---|
@@ -812,12 +812,12 @@ D2 兼容要求：以上路径、方法、字段、错误码与降级行为保�
 - 宿主测试入口：根目录 `pytest.ini`（`asyncio_mode=auto`、markers）+ `pyproject.toml` dev 依赖（Python 3.11）；`tests/conftest.py` 做真实根隔离与时钟/存储守卫。本地离线可用现有 `.venv\Scripts\python.exe -m pytest`（不用 `uv run`，避免 sync/联网）；建议 `PYTHONDONTWRITEBYTECODE=1`、`-p no:cacheprovider`、`--basetemp` 指向仓库外，跑后核对 `git status` 数量不变。
 - 已实测最小入口（离线）：`.venv\Scripts\python.exe -m pytest tests/unit/test_companion_event_sources.py tests/unit/test_correction_propagation.py tests/unit/test_outbox.py -q` → 38 passed；`node --test tests/frontend/live2d_audio_ownership.test.cjs` → 71 pass。
 - 行为域→测试映射（节选，完整由 B02 起按需扩展）：状态 `test_companion_state_store/route/handoff/chat_wiring`；事件与来源 `test_companion_event_sources/ingest`；事件日志/恢复 `test_event_log/outbox/outbox_wiring`；闸门 `test_fact_source_gate/legacy_extraction_barrier`；更正 `test_correction_store/propagation/turn_context`；删除 `test_deletion_store/engine/barrier/poll/api_client/dedup_purge/episode_deletion/visit_forget`；成长 `test_growth_model/injection/withdrawal/p3_growth_flow`；人格版本 `test_persona_version_poll/sts2_companion_route/persona_version_history`；送达 `test_mirror_speech_stream/interrupt_mirror_speech/companion_delivery_mentions`；turn context `test_memory_turn_context/turn_context_providers/turn_context_efficiency`；导入导出 `test_memory_management_routes/persona_external_import`；持久化 `test_memory_server_cache_settle/scoped_history_idempotency/visit_debrief_writes`；前端 `tests/frontend/*.py`（Playwright，需浏览器）与 `tests/frontend/*.test.cjs`（node --test，自包含）。
-- 固定样本（均为合成数据，可复用）：`tests/fixtures/character_profile_v1.json`、`tests/fixtures/chat_sync_original_v1.json`（golden canonical+sha256）；`tests/unit/fixtures/scoped_client_wire/*.json`（ScopedMemoryClient 线格式）；`tests/unit/visit_memory_test_helpers.py`（fake memory server + 真实 client）；`tests/fake_clock.py`、`tests/real_root_isolation.py`、`tests/storage_root_env_guard.py`。新增样本建议放 `companion-memory/tests/fixtures/memory_v1/`，按域分目录、带 `schema_version` 与 design §5.2 最小字段，禁止真实角色名/语音 ID/对话原文。
+- 固定样本（均为合成数据，可复用）：`tests/fixtures/character_profile_v1.json`、`tests/fixtures/chat_sync_original_v1.json`（golden canonical+sha256）；`tests/unit/fixtures/scoped_client_wire/*.json`（ScopedMemoryClient 线格式）；`tests/unit/visit_memory_test_helpers.py`（fake memory server + 真实 client）；`tests/fake_clock.py`、`tests/real_root_isolation.py`、`tests/storage_root_env_guard.py`。新增样本建议放 `rin-memory/tests/fixtures/memory_v1/`，按域分目录、带 `schema_version` 与 design §5.2 最小字段，禁止真实角色名/语音 ID/对话原文。
 - 禁止用于 B02+ 验收的测试：`tests/frontend/*.py` 与 `tests/e2e/*` 依赖 `clean_user_data_dir`，会复制开发者真实 `app_docs_dir`（`tests/conftest.py:585-601`）；`tests/test_persona_mock.py` 内嵌疑似真实角色卡且不是 pytest 用例，不得迁入或作为样本。
 
 **17.12 最小验证入口与基线方法**
 
-- 分层验证：①核心包 `uv run python -m unittest discover -s tests -v`（3 个 B00 行为测试）与独立示例 `uv run python -m companion_memory`；②宿主纯单测（见 §17.11 命令）；③进程内 app/TestClient 路由测试（`test_companion_state_route`、`test_memory_management_routes`、`test_memory_server_cache_settle` 等）；④真实 memory server 集成（`tests/integration/test_reconcile_write_race.py` 等，临时目录）；⑤main server+浏览器/游戏实机（B08/B09，使用隔离副本，不用正式数据）。
+- 分层验证：①核心包 `uv run python -m unittest discover -s tests -v`（3 个 B00 行为测试）与独立示例 `uv run python -m rin_memory`；②宿主纯单测（见 §17.11 命令）；③进程内 app/TestClient 路由测试（`test_companion_state_route`、`test_memory_management_routes`、`test_memory_server_cache_settle` 等）；④真实 memory server 集成（`tests/integration/test_reconcile_write_race.py` 等，临时目录）；⑤main server+浏览器/游戏实机（B08/B09，使用隔离副本，不用正式数据）。
 - 基线方法：design §12 的“本地上下文额外开销 p95 ≤50ms”当前**没有现成测量**：`test_runtime_memory_baseline.py` 测 RSS/USS，`test_turn_context_efficiency.py` 钉缓存/预算语义，`test_memory_server_cache_settle.py` 钉持久化语义。B08/B09 需新增插桩：记录 `/internal/memory/{name}/turn_context` 与 `/api/companion/context` 的本地耗时、超时占比、前台模型调用数，与 `TURN_CONTEXT_BUDGET_SECONDS`（`config/turn_context_settings.py`）一起报告 p95；测量在隔离副本上做，结果与输入集、缓存状态、硬件一起记录。
 - 数据隔离：B02—B07 只用临时目录/合成样本；任何宿主测试不得指向 `nekodata` 或真实 `Documents/N.E.K.O`。
 
@@ -918,7 +918,7 @@ B03 输入：
 **17.14.6 验证**
 
 - `uv run python -m unittest discover -s tests -v`：15/15 通过（B00 框架 3 + B02 新增 12）。
-- `uv run python -m companion_memory`：输出内存示例与临时数据根示例；后者 `accepted/durable=true`、重试 `duplicate`、重开同一根仍 `duplicate`，数据文件仅 `events.ndjson`、`events_applied.json`、`source_events.json`，位于系统临时目录，退出即删除。
+- `uv run python -m rin_memory`：输出内存示例与临时数据根示例；后者 `accepted/durable=true`、重试 `duplicate`、重开同一根仍 `duplicate`，数据文件仅 `events.ndjson`、`events_applied.json`、`source_events.json`，位于系统临时目录，退出即删除。
 - 静态边界：确认核心包无 `app/memory/utils/main_logic/main_routers/launcher_core` 导入；无网络、无宿主配置读取。
 - 新增 12 个用例超过“每次默认最多 3 个”的上限；原因：B02 新增 9 个存储模块，且验收列出 6 类独立风险（持久重开、重试只生效一次、中断恢复、损坏保留、未知 schema 拒绝、许可拒绝），每类存储至少需要正例与拒绝路径分别证明。
 
@@ -998,7 +998,7 @@ B04 输入：
 **17.15.6 验证**
 
 - `uv run python -m unittest discover -s tests`：**29/29 通过**（B00 框架 3 + B02 12 + B03 14：deletion 4、correction 4、barrier 3、directives 3）。
-- `uv run python -X utf8 -m companion_memory`：三段示例（内存、B02 持久、B03 更正+删除）。第三段显示修正失效 `fact_tokyo`、删除回执 `completed/stopped_using/content_cleaned`、删除后重放同来源返回 `rejected/deleted_source/durable=true`、重开后回执仍 completed 且 facts 仅剩 `fact_cat`。
+- `uv run python -X utf8 -m rin_memory`：三段示例（内存、B02 持久、B03 更正+删除）。第三段显示修正失效 `fact_tokyo`、删除回执 `completed/stopped_using/content_cleaned`、删除后重放同来源返回 `rejected/deleted_source/durable=true`、重开后回执仍 completed 且 facts 仅剩 `fact_cat`。
 - `uv build`：sdist 与 wheel 构建成功。
 - 静态边界：`src/` 无宿主包导入；数据只在系统临时目录创建；未读写 `nekodata`，未改宿主/插件工作树。
 - 新增 14 个用例超过“默认最多 3 个”的上限；原因：B03 新增 6 个存储/服务模块，验收列出 7 类独立风险（屏障先于清理、重放/重试防复活、坏文件 fail closed、episode 原文范围、插件离线 pending、更正传播幂等与在途作废、提及限制 TTL/轮转），每类需正例与拒绝路径分别证明。
@@ -1071,7 +1071,7 @@ B05 输入：
 **17.16.6 验证**
 
 - `uv run python -m unittest discover -s tests`：**39/39 通过**（B00 3 + B02 12 + B03 14 + B04 10：recent 3、classification 3、extraction 4）。
-- `uv run python -X utf8 -m companion_memory`：四段示例。第四段显示 ingest `extracted`、facts 行（hash/source/schema_version）、压缩 `completed/summarized=14`、队首备忘录、timeindex 原文行仍在、outbox 无 pending。
+- `uv run python -X utf8 -m rin_memory`：四段示例。第四段显示 ingest `extracted`、facts 行（hash/source/schema_version）、压缩 `completed/summarized=14`、队首备忘录、timeindex 原文行仍在、outbox 无 pending。
 - `uv build`：sdist 与 wheel 构建成功；核心包无宿主导入。
 - 新增 10 个用例超过默认 3 个上限；原因：B04 新增 5 个模块，验收列出 5 类独立风险（recent 宿主格式与 fail-closed、9 类路由/闸门、原文与事实双写、自述/去重、失败重试与晚到结果屏障），每类需要正例与拒绝/恢复路径分别证明。
 
@@ -1149,7 +1149,7 @@ B06 输入：
 **17.17.6 验证**
 
 - `uv run python -m unittest discover -s tests`：**60/60 通过**（B00 3 + B02 12 + B03 14 + B04 10 + B05 21：存储 6、反思域 11、人格域 4）。
-- `uv run python -X utf8 -m companion_memory`：五段示例。第五段显示合成 `completed`（确定性 id、absorbed=5）、反馈把证据推过阈值后 `confirmed/promoted`、persona `prom_ref_...`、growth 晋升 `prom_growth_...` 且 block 含支持数、删除后反思收窄 `needs_rebuild` 且派生人格被撤回、growth 撤回后 persona 标记 `persona_retracted`、重开后状态保持且 growth_items 为空。
+- `uv run python -X utf8 -m rin_memory`：五段示例。第五段显示合成 `completed`（确定性 id、absorbed=5）、反馈把证据推过阈值后 `confirmed/promoted`、persona `prom_ref_...`、growth 晋升 `prom_growth_...` 且 block 含支持数、删除后反思收窄 `needs_rebuild` 且派生人格被撤回、growth 撤回后 persona 标记 `persona_retracted`、重开后状态保持且 growth_items 为空。
 - `uv build`：sdist 与 wheel 构建成功；核心包无宿主导入；数据只在系统临时目录创建。
 - 新增 21 个用例超过“默认最多 3 个”的上限；原因：B05 迁入宿主最大的记忆子系统（反思+人格+成长+归档+事件回放，8 个模块/文件），验收列出 9 类独立风险（磁盘格式与 fail-closed、确定性 id/幂等合成、退避与死信、证据衰减与阈值、三条晋升路径、surfaced/feedback、growth 支持/usage/撤回、删除与更正的派生失效、屏障 stale 与回放恢复），每类需要正例与拒绝/恢复路径分别证明；其中存储层 6 个用例覆盖三类新文件与分片/许可拒绝。
 
@@ -1218,7 +1218,7 @@ B07 输入：
 **17.18.6 验证**
 
 - `uv run python -m unittest discover -s tests`：**68/68 通过**（B05 60 + B06 新增 8：排序/融合 2、读侧失效 1、指代/episode 1、预算与端口 1、成长块 1、时间召回/降级 1、引擎 build_context 1）。
-- `uv run python -X utf8 -m companion_memory`：六段示例。第六段显示显式召回 `matched/hybrid`（含 source_keys）、被动上下文 `matched` 且返回 2 条带来源条目、新话题 `miss` 且空上下文、指代续接命中跑步经历并带 episode_id、更正后召回 `miss` 但更正块仍显示“在公园跑步 -> 在河边跑步”、时间窗召回命中。
+- `uv run python -X utf8 -m rin_memory`：六段示例。第六段显示显式召回 `matched/hybrid`（含 source_keys）、被动上下文 `matched` 且返回 2 条带来源条目、新话题 `miss` 且空上下文、指代续接命中跑步经历并带 episode_id、更正后召回 `miss` 但更正块仍显示“在公园跑步 -> 在河边跑步”、时间窗召回命中。
 - `uv build`：sdist 与 wheel 构建成功；核心包无宿主导入；数据只在系统临时目录创建。
 - 新增 8 个用例超过“默认最多 3 个”的上限；原因：B06 新增召回子系统（端口、域服务、引擎/装配接线），验收列出 5 类独立风险（排序与 RRF 融合、无向量降级、读侧删除/更正过滤、预算/token 端口、指代与 episode 连续性），另需覆盖失败降级与未装配入口，故 8 个。
 
@@ -1235,10 +1235,10 @@ B07 输入：
 | `domain/state.py` | 状态读取/提交/租约服务 | `StateReadRequest/StateCommitRequest/StateSnapshot/StateReceipt`；提交顺序租约→request_id 幂等→base_version→apply→version+1→事件+视图；冲突/非法请求以回执返回（`conflict/reason/current`），不抛异常；租约 TTL 90..3600s、续租阈值 45s；`internal=true` 宿主写入不受租约阻塞；mood 衰减读时计算、不写版本 |
 | `domain/outbox_dispatch.py` | outbox 派发 | 注册表 bulk/per-op；`run_pending` 返回 processed/failed/pending/skipped/dead_letter；`extract_facts` 由组合根注册为 bulk（`extraction.process_outbox`）；未知 op 保留 pending 并计 skipped；失败 `outbox.fail`，达阈值计 dead_letter |
 | `domain/maintenance.py` | 维护循环 | `MaintenanceSettings/MaintenanceResult`；`run_once` 固定顺序 reconcile→outbox→migrations→synthesize→promote→archive→persona corrections→growth reconcile→删除 pending/failed retry→可选 journal compaction；每步异常隔离、状态 completed/partial、永不抛；`start/stop` 每角色单 asyncio.Task、重复 start 幂等、stop 后任务清空 |
-| `cli.py` | 独立数据目录入口 | `demo` 子命令复用六段示例；`run --memory-root --character [--local-state-root] [--once|--loop] [--interval-seconds]`；路径校验拒绝 nekodata/Documents/N.E.K.O；单写者锁 `<root>/<char>/.companion_memory.writer.lock`（O_EXCL+pid+stale 清理）；退出码 0/2/3/1 |
+| `cli.py` | 独立数据目录入口 | `demo` 子命令复用六段示例；`run --memory-root --character [--local-state-root] [--once|--loop] [--interval-seconds]`；路径校验拒绝 nekodata/Documents/N.E.K.O；单写者锁 `<root>/<char>/.rin_memory.writer.lock`（O_EXCL+pid+stale 清理）；退出码 0/2/3/1 |
 | `adapters/composition.py` | B07 装配 | 新增 StateStore/StateService（注册状态回放 handler）、OutboxDispatcher（注册 extract_facts bulk）、MaintenanceService（接 deletion/reflection/persona/journal/outbox，`recover=sink.recover`）；`build_memory_core(..., maintenance_settings=...)` |
 | `api.py` / `__init__.py` / `__main__.py` | 引擎操作、导出与第七段示例 | `read_state/commit_state/maintain`（未装配抛 `NotConfiguredError`）；示例演示租约+状态提交/读取、mood 6h 衰减、outbox 派发、维护 10 步、删除后 retry、重开保持版本 |
-| `pyproject.toml` | 独立入口 | 新增 console script `companion-memory-run = companion_memory.cli:main`（原 demo 入口保留） |
+| `pyproject.toml` | 独立入口 | 新增 console script `rin-memory-run = rin_memory.cli:main`（原 demo 入口保留） |
 | `tests/test_b07_state.py` | 验收用例 | 8 个用例覆盖状态版本/mood 衰减、幂等与冲突、租约规则、outbox 派发、维护循环、引擎 API、CLI once+单写者锁、非法数据根拒绝 |
 
 **17.19.2 状态写入顺序与失败语义（冻结）**
@@ -1290,8 +1290,8 @@ B08 输入：
 **17.19.6 验证**
 
 - `uv run python -m unittest discover -s tests`：**76/76 通过**（B06 68 + B07 新增 8：状态 3、outbox 1、维护循环 1、引擎 API 1、CLI 2）。
-- `uv run python -X utf8 -m companion_memory`：七段示例。第七段显示租约+状态提交 version=1、块含想法与情绪、6 小时后强度 1.00→0.50 且版本仍为 1、outbox `processed=1/pending=0`、维护 10 步（reconcile/outbox/synthesize/promote/archive/persona_corrections/growth_reconcile/deletion_retry 均 ok，migrations/journal_compaction skipped）、删除后 retry 仍 ok、重开版本与块保持。
-- `uv run python -m companion_memory.cli run --memory-root <临时目录> --character demo --once`：退出码 0，输出维护摘要；第二次并发（持锁）退出码 3；nekodata/Documents 路径退出码 2。
+- `uv run python -X utf8 -m rin_memory`：七段示例。第七段显示租约+状态提交 version=1、块含想法与情绪、6 小时后强度 1.00→0.50 且版本仍为 1、outbox `processed=1/pending=0`、维护 10 步（reconcile/outbox/synthesize/promote/archive/persona_corrections/growth_reconcile/deletion_retry 均 ok，migrations/journal_compaction skipped）、删除后 retry 仍 ok、重开版本与块保持。
+- `uv run python -m rin_memory.cli run --memory-root <临时目录> --character demo --once`：退出码 0，输出维护摘要；第二次并发（持锁）退出码 3；nekodata/Documents 路径退出码 2。
 - `uv build`：sdist 与 wheel 构建成功；核心包无宿主导入；数据只在系统临时目录创建。
 - 新增 8 个用例超过“默认最多 3 个”的上限；原因：B07 新增状态存储/服务、outbox 派发、维护循环与独立入口四块，验收列出 5 类独立风险（state 格式与 fail-closed、租约/版本/幂等、outbox 派发与死信、维护顺序与任务生命周期、单写者锁与数据根拒绝），每类需正例与拒绝路径分别证明。
 
@@ -1326,7 +1326,7 @@ B08 输入：
 | R1 | 直接改 85 条路由风险高 | 采用 app 级中间件 + 新包委托，既有路由文件零改动（除一处安装钩子），便于回退 |
 | R2 | 全量委托范围大 | B08 先委托核心子集（turn_context/state/events/corrections/deletions/query_memory），其余 fallback 旧链路；B09 按回归结果扩展 |
 | R3 | 开关方式 | 环境变量 `COMPANION_MEMORY_ENGINE=1` 显式开启（默认关闭），隔离根用 `COMPANION_MEMORY_ENGINE_ROOT`；不写用户配置 |
-| R4 | 宿主 venv 未安装 companion-memory | 测试用 sibling `src` 注入 sys.path；正式接入需 wheel/editable 安装，属 B14 打包/安装演练 |
+| R4 | 宿主 venv 未安装 rin-memory | 测试用 sibling `src` 注入 sys.path；正式接入需 wheel/editable 安装，属 B14 打包/安装演练 |
 | R5 | 向量/embedding | `HostEmbeddingProvider` 默认关闭（BM25 降级），避免离线/额外模型调用；B09 再评估 |
 | R6 | events 多类型 | 只委托 chat/preference/correction/shared_experience 子集；game/plugin/delivery 等仍走旧链路 |
 | R7 | 中间件顺序 | Starlette 后加为外层；存储/发布围栏仍在桥接之前执行（已验证语义），不绕过宿主围栏 |
@@ -1337,7 +1337,7 @@ B08 输入：
 已知限制：
 
 - POST /corrections（宿主文本解析语义）、无显式 id 的删除、get_persona/get_settings/new_dialog、events 其余类型仍走旧链路。
-- 宿主 venv 未安装 companion-memory；当前仅隔离测试可运行，正式启用需先完成 B14 的 wheel/安装演练。
+- 宿主 venv 未安装 rin-memory；当前仅隔离测试可运行，正式启用需先完成 B14 的 wheel/安装演练。
 - 未启动真实服务端口、未接真实模型/语音/Live2D；实时会话与游戏 poll 的版本配对留 B11。
 - 维护循环与旧后台循环并行运行（默认关闭时不启动），B09 决定哪些旧循环委托/退场。
 - 隔离根 env 仅用于测试/演练，不进入用户配置。
@@ -1385,7 +1385,7 @@ B09 输入：
 **17.21.3 未验证项（明确记录，不带入“已完成”含义）**
 
 - 无运行中宿主进程、游戏、音频设备与浏览器：实时语音链路、Live2D 实机表现、游戏 planner poll 实机配对未验证。
-- 宿主 venv 未安装 `companion-memory`：引擎只在测试 sys.path 注入下运行；正式接入需 B14 的 wheel/editable 安装演练。
+- 宿主 venv 未安装 `rin-memory`：引擎只在测试 sys.path 注入下运行；正式接入需 B14 的 wheel/editable 安装演练。
 - 仍走旧链路（B08 遗留）：POST /corrections 文本语义、无显式 id 删除、get_persona/get_settings/new_dialog、events 非 chat 子集。
 - turn_context p95 无插桩测量；隔离集成使用假 core/模型，不是真实模型延迟。
 
@@ -1549,14 +1549,14 @@ B09 输入：
 **17.26.3 验证**
 
 - `.scratch/check_b14_migration.py`：**44 PASS**（detect/dry-run 树哈希不变/migrate 备份+sentinel→-1+SQLite schema_meta/二次幂等零写入/rollback 保留切换后新增事件·事实·对话·反思·删除·更正·墓碑且 conflicts 为空/--no-preserve-new 逐字节恢复/未知 schema exit 2 且文件未动/CLI 三条命令）。
-- CLI 实测（Lead 复核，临时根）：`migrate --dry-run` exit 0、`migrate` exit 0、`rollback` exit 0 且 `backup_verified=true`；`package-check` status ok，wheel 347,469 B/68 文件，临时 venv 安装后 `import companion_memory` 通过、`-m companion_memory` demo 退出 0（412 行，`UV_OFFLINE=1` 无网络）。
+- CLI 实测（Lead 复核，临时根）：`migrate --dry-run` exit 0、`migrate` exit 0、`rollback` exit 0 且 `backup_verified=true`；`package-check` status ok，wheel 347,469 B/68 文件，临时 venv 安装后 `import rin_memory` 通过、`-m rin_memory` demo 退出 0（412 行，`UV_OFFLINE=1` 无网络）。
 - 全量 `uv run python -m unittest discover -s tests`：**100/100**；十一段 demo exit 0；`uv build` 成功；核心包无宿主导入。
 - 安全：仅临时目录构造 v1 数据根（含 legacy sentinel、SQLite、删除/更正记录与对话）；备份默认 `<memory-root>.backup-<UTC>`；CLI 拒绝 nekodata/Documents 路径（exit 2）；未改宿主（git 110）、未读 nekodata、未启服务。
 - 当批未执行：正式用户数据切换、真实副本停写/单写者切换、宿主侧迁移钩子接线。迁移钩子源码与隔离验证在 C05 推进；真实数据和服务操作按当次已有授权执行。
 
 **17.27 B15 交付：正式切换与实机验收（待条件）**
 
-本节保存 2026-10-22 当批交付与现场记录：未执行正式切换，当批缺部署窗口与运行环境，宿主 venv 未安装 companion-memory。当前收尾先补 C01—C05 的开发和集成任务，再按 C06 核对现场与已有授权；执行状态以 roadmap 为准。
+本节保存 2026-10-22 当批交付与现场记录：未执行正式切换，当批缺部署窗口与运行环境，宿主 venv 未安装 rin-memory。当前收尾先补 C01—C05 的开发和集成任务，再按 C06 核对现场与已有授权；执行状态以 roadmap 为准。
 
 **17.27.1 已具备证据**
 
@@ -1573,7 +1573,7 @@ B09 输入：
 | C05 集成、版本组合与迁移钩子 | 实际切换链路尚待演练 | 先完成源码与隔离验证，再按授权操作一致性副本 |
 | 当次部署授权/维护窗口 | 正式停写与切换尚未执行 | 核对已有授权和实际时机；仅缺必要信息时补充 |
 | 运行中宿主/游戏/音频/浏览器 | 实时语音、Live2D、游戏 poll 实机未验 | 在真实环境执行 B09/B15 验收 |
-| 宿主 venv 未安装 companion-memory | 引擎无法在宿主进程启用 | 执行 B14 `package-check` 的 wheel/editable 安装步骤 |
+| 宿主 venv 未安装 rin-memory | 引擎无法在宿主进程启用 | 执行 B14 `package-check` 的 wheel/editable 安装步骤 |
 | p95/性能插桩 | A16 无证据 | 接入指标后测量 turn_context/recall 延迟 |
 | 实机回滚未执行 | 临时根演练已有，真实数据副本待验证 | 按授权在一致性副本执行 `rollback --memory-root <root> --backup-root <backup>`，默认保留新增数据 |
 

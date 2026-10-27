@@ -14,14 +14,14 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import DeletionRequest, MemoryEvent, Scope
-from companion_memory.errors import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import DeletionRequest, MemoryEvent, Scope
+from rin_memory.errors import (
     BarrierStaleError, CorruptStoreError, DeletionNotFoundError,
     InvalidSchemaError, WriteRejected,
 )
-from companion_memory.persistence.permits import RejectingWritePermit
-from companion_memory.persistence.records import event_snapshot
+from rin_memory.persistence.permits import RejectingWritePermit
+from rin_memory.persistence.records import event_snapshot
 
 
 class FixedClock:

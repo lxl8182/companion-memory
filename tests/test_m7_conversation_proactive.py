@@ -18,8 +18,8 @@ class ConversationTests(ProactiveBase):
             "followup_when": {"offset": 1, "unit": "day"}, "agreed_followup": True,
         }]})])
         core = self.build(model=model)
-        scope = {"plugin_id": "dsh-companion-memory"}
-        scene = "plugin:dsh-companion-memory"
+        scope = {"plugin_id": "dsh-rin-memory"}
+        scene = "plugin:dsh-rin-memory"
         message = human("我明天去面试，明天这个点记得问我结果")
         message["data"]["metadata"] = {"applies_to": scope, "scene": scene}
         await core.extraction.ingest_turn("rin", [message],
@@ -71,7 +71,7 @@ class ConversationTests(ProactiveBase):
 
 class ProactiveHttpTests(ServiceHarness):
     def test_capability_and_session_binding_are_enforced(self):
-        scope = dict(subject="private", session_id="qq-test", scene="plugin:dsh-companion-memory", request_id="poll")
+        scope = dict(subject="private", session_id="qq-test", scene="plugin:dsh-rin-memory", request_id="poll")
         status, _ = self.call("POST", "/v1/proactive/poll", scope)
         self.assertEqual(status, 403)
         status, result = self.call("POST", "/v1/proactive/poll", scope, client="desk")

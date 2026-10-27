@@ -15,11 +15,11 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.cli import acquire_writer_lock, main as cli_main, release_writer_lock
-from companion_memory.contracts import DeletionRequest, Scope
-from companion_memory.domain.extraction import ExtractionSettings
-from companion_memory.errors import NotConfiguredError
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.cli import acquire_writer_lock, main as cli_main, release_writer_lock
+from rin_memory.contracts import DeletionRequest, Scope
+from rin_memory.domain.extraction import ExtractionSettings
+from rin_memory.errors import NotConfiguredError
 
 
 class MutableClock:
@@ -242,7 +242,7 @@ class StateFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(core.maintenance.running("demo"))
 
     async def test_engine_state_and_maintenance_api(self):
-        from companion_memory.api import MemoryEngine
+        from rin_memory.api import MemoryEngine
 
         core = self.build()
         core.recover("demo")

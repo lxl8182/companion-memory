@@ -12,8 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from companion_memory.errors import RootLockConflict
-from companion_memory.persistence.ownership import acquire_root_lock
+from rin_memory.errors import RootLockConflict
+from rin_memory.persistence.ownership import acquire_root_lock
 
 WEBUI_DIR = Path(__file__).resolve().parents[1] / "webui"
 if str(WEBUI_DIR) not in sys.path:

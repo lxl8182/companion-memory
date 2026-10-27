@@ -30,15 +30,15 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
-from companion_memory.domain.persona_card import MAX_SECTION_TEXT
-from companion_memory.domain.persona_teaching import (
+from rin_memory.domain.persona_card import MAX_SECTION_TEXT
+from rin_memory.domain.persona_teaching import (
     EXPRESSION_SECTION_ID,
     derive_teaching,
 )
-from companion_memory.service.console import ApiError
-from companion_memory.service.management import ManagementApi
-from companion_memory.service.memory_service import MemoryService, ServiceSettings
-from companion_memory.service.server import MemoryApi, build_server
+from rin_memory.service.console import ApiError
+from rin_memory.service.management import ManagementApi
+from rin_memory.service.memory_service import MemoryService, ServiceSettings
+from rin_memory.service.server import MemoryApi, build_server
 
 GREETING = "以后别每次都总结，像朋友一样接着聊"
 SECOND = "以后可以更黏人一点"

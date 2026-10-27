@@ -952,7 +952,7 @@ class ManagementApi:
         request_id = payload.get("request_id")
         if request_id is not None and not isinstance(request_id, str):
             raise ApiError("invalid_argument", 400, "request_id must be a string")
-        from companion_memory.contracts import CorrectionRequest, Scope
+        from rin_memory.contracts import CorrectionRequest, Scope
 
         with self.console._lock:
             receipt = asyncio.run(self.service.core.correction_service.correct(
@@ -984,7 +984,7 @@ class ManagementApi:
         """
         self.require_memory_tools(identity)
         scope = self._memory_scope(payload, identity)
-        from companion_memory.contracts import DeletionRequest, DeletionTarget, Scope
+        from rin_memory.contracts import DeletionRequest, DeletionTarget, Scope
 
         target = payload.get("target")
         source_key = payload.get("source_key")

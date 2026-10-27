@@ -23,9 +23,9 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
-from companion_memory.service.management import ManagementApi
-from companion_memory.service.memory_service import MemoryService, ServiceSettings
-from companion_memory.service.server import ApiError, MemoryApi, build_server
+from rin_memory.service.management import ManagementApi
+from rin_memory.service.memory_service import MemoryService, ServiceSettings
+from rin_memory.service.server import ApiError, MemoryApi, build_server
 
 
 class HostPersonaTests(unittest.TestCase):
@@ -61,7 +61,7 @@ class HostPersonaTests(unittest.TestCase):
         }, identity=identity or self.identity)
 
     def test_capability_is_required_and_never_comes_from_the_console_flag(self):
-        from companion_memory.service.console import ApiError as ConsoleError
+        from rin_memory.service.console import ApiError as ConsoleError
 
         reading = dict(self.identity, host_persona=False)
         with self.assertRaises(ConsoleError) as denied:
@@ -76,7 +76,7 @@ class HostPersonaTests(unittest.TestCase):
         self.assertEqual(self.card()["sections"][0]["text"], "名字: 小潮\n温柔而直白。")
 
     def test_stale_base_revision_conflicts_and_reports_the_current_card(self):
-        from companion_memory.service.console import ApiError as ConsoleError
+        from rin_memory.service.console import ApiError as ConsoleError
 
         first = self.revise("温柔而直白，也更耐心。")
         self.assertEqual(first["status"], "completed")
@@ -91,7 +91,7 @@ class HostPersonaTests(unittest.TestCase):
         self.assertEqual(self.card()["sections"][0]["text"], "名字: 小潮\n温柔而直白，也更耐心。")
 
     def test_publish_only_accepts_the_shown_revision_and_next_turn(self):
-        from companion_memory.service.console import ApiError as ConsoleError
+        from rin_memory.service.console import ApiError as ConsoleError
 
         self.revise("第二版人格。")
         shown = self.card()["revision"]

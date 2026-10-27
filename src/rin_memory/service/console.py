@@ -1243,7 +1243,7 @@ class RinApp:
 
     def cleanup_delete(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         self._assert_writable()
-        from companion_memory.contracts import (
+        from rin_memory.contracts import (
             DeletionRequest,
             DeletionTarget,
             Scope,
@@ -1410,7 +1410,7 @@ class RinApp:
             raise ApiError("invalid_request", 400, "new_text must be a string")
         if not (old_text or "").strip() and not (new_text or "").strip():
             raise ApiError("invalid_request", 400, "old_text or new_text is required")
-        from companion_memory.contracts import CorrectionRequest, Scope
+        from rin_memory.contracts import CorrectionRequest, Scope
 
         with self._lock:
             receipt = asyncio.run(self.core.correction_service.correct(

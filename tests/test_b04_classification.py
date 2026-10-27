@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from companion_memory.classification import (
+from rin_memory.classification import (
     CONTENT_CLASSES,
     HOST_MEMORY_CLASSES,
     PLUGIN_ONLY_CLASSES,
@@ -17,7 +17,7 @@ from companion_memory.classification import (
     message_source_keys,
     metadata_of,
 )
-from companion_memory.persistence.gates import GateState, SuppressionGate
+from rin_memory.persistence.gates import GateState, SuppressionGate
 
 META_KEYS = {
     "gate_mode",

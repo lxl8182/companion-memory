@@ -20,10 +20,10 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.domain.extraction import ExtractionSettings
-from companion_memory.domain.turns import TurnCommitService, TurnRequest
-from companion_memory.persistence.turns import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.domain.extraction import ExtractionSettings
+from rin_memory.domain.turns import TurnCommitService, TurnRequest
+from rin_memory.persistence.turns import (
     STATUS_COMMITTED,
     STATUS_DELETED,
     STATUS_FAILED,
@@ -217,9 +217,9 @@ class TurnCommitTests(unittest.IsolatedAsyncioTestCase):
         service = self.service(core)
         # A source key the barrier already deleted is rejected by ingest.
         await core.deletion_service.forget(
-            __import__("companion_memory.contracts", fromlist=["DeletionRequest"])
+            __import__("rin_memory.contracts", fromlist=["DeletionRequest"])
             .DeletionRequest(
-                scope=__import__("companion_memory.contracts", fromlist=["Scope"]).Scope("demo"),
+                scope=__import__("rin_memory.contracts", fromlist=["Scope"]).Scope("demo"),
                 source_keys=("host:demo:private:s1",),
             ),
         )
@@ -428,7 +428,7 @@ class TurnStoreTests(unittest.TestCase):
                       "the newer store must not be downgraded")
 
     def test_records_are_bounded(self):
-        from companion_memory.persistence import turns as turns_module
+        from rin_memory.persistence import turns as turns_module
 
         store = self.core.turn_requests
         original = turns_module.MAX_RECORDS

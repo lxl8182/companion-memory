@@ -32,15 +32,15 @@ for extra in (REPO, REPO / "webui", REPO / "src"):
 
 import server as webui_server  # noqa: E402
 
-from companion_memory.adapters.model_http import (  # noqa: E402
+from rin_memory.adapters.model_http import (  # noqa: E402
     HttpModelInvoker,
     ModelSettings,
 )
-from companion_memory.service.memory_service import (  # noqa: E402
+from rin_memory.service.memory_service import (  # noqa: E402
     MemoryService,
     ServiceSettings,
 )
-from companion_memory.service.model_config import (  # noqa: E402
+from rin_memory.service.model_config import (  # noqa: E402
     ModelConfigError,
     apply_model_config,
     load_model_config,
@@ -310,7 +310,7 @@ class ConsoleConfigTests(unittest.TestCase):
         self.assertFalse(status["model"]["demo"])
         # The core's own consumers were rebound to the real invoker, so the
         # setting does not apply to chat while background stays on the stub.
-        from companion_memory.adapters.model_http import HttpModelInvoker
+        from rin_memory.adapters.model_http import HttpModelInvoker
 
         self.assertIsInstance(self.app.core.extraction._model, HttpModelInvoker)
         self.assertIs(
@@ -377,7 +377,7 @@ class ServiceModeTests(unittest.TestCase):
             memory_root=self.root, character="companion",
             local_state_root=self.root / "local_state",
         ))
-        from companion_memory.service.management import ManagementApi
+        from rin_memory.service.management import ManagementApi
 
         self.management = ManagementApi(self.service, display_name="小潮")
         self.service.core.persona_card_service.import_initial("companion", [
@@ -409,7 +409,7 @@ class ServiceModeTests(unittest.TestCase):
         self.assertIs(self.service.core.extraction._model, self.service.model)
 
     def test_service_transport_rejects_a_bad_value(self):
-        from companion_memory.service.console import ApiError as ConsoleError
+        from rin_memory.service.console import ApiError as ConsoleError
 
         with self.assertRaises(ConsoleError) as caught:
             self.management.post("/v1/model/config", {"reasoning_effort": "nope"})

@@ -4,7 +4,7 @@ The host keeps one short-term state document per character, split by subject
 (private or a scoped subject key). This adapter owns the on-disk shape, the
 pure normalization/apply/render rules and the journal replay handler; the
 commit/lease/version/idempotency *orchestration* lives in
-\`companion_memory.domain.state\`.
+\`rin_memory.domain.state\`.
 
 On-disk contract (host \`memory/companion_state.py:247-365\`)
 -------------------------------------------------------------

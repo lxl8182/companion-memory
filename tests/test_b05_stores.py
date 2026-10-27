@@ -11,14 +11,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from companion_memory.errors import CorruptStoreError, ContentBlockedError
-from companion_memory.persistence.atomic import FileSystemAtomicStore
-from companion_memory.persistence.clock import SystemClock
-from companion_memory.persistence.permits import NullWritePermit
-from companion_memory.persistence.persona import PersonaStore
-from companion_memory.persistence.reflections import ReflectionStore
-from companion_memory.persistence.roots import FileSystemRoots
-from companion_memory.persistence.shards import ArchiveShardStore
+from rin_memory.errors import CorruptStoreError, ContentBlockedError
+from rin_memory.persistence.atomic import FileSystemAtomicStore
+from rin_memory.persistence.clock import SystemClock
+from rin_memory.persistence.permits import NullWritePermit
+from rin_memory.persistence.persona import PersonaStore
+from rin_memory.persistence.reflections import ReflectionStore
+from rin_memory.persistence.roots import FileSystemRoots
+from rin_memory.persistence.shards import ArchiveShardStore
 
 
 class StoreHarness(unittest.TestCase):

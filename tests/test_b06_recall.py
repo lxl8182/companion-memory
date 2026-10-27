@@ -12,16 +12,16 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import (
     ContextRequest,
     CorrectionRequest,
     DeletionRequest,
     DeletionTarget,
     Scope,
 )
-from companion_memory.domain.recall import RecallService, RecallSettings
-from companion_memory.errors import NotConfiguredError
+from rin_memory.domain.recall import RecallService, RecallSettings
+from rin_memory.errors import NotConfiguredError
 
 
 class FixedClock:
@@ -328,7 +328,7 @@ class RecallFlowTests(unittest.IsolatedAsyncioTestCase):
         empty_context = await bare.build_turn_context("demo", current_input="anything")
         self.assertEqual(empty_context["result"], "unavailable")
 
-        engine = __import__("companion_memory.api", fromlist=["MemoryEngine"]).MemoryEngine(
+        engine = __import__("rin_memory.api", fromlist=["MemoryEngine"]).MemoryEngine(
             events=None, profiles=None, context=None,
         )
         with self.assertRaises(NotConfiguredError):
@@ -359,7 +359,7 @@ class EngineContextTests(unittest.IsolatedAsyncioTestCase):
                 async def recall(self, request):
                     raise AssertionError("the demo provider must not be used")
 
-            from companion_memory.api import MemoryEngine
+            from rin_memory.api import MemoryEngine
             engine = MemoryEngine(
                 events=core.sink, profiles=Profiles(),
                 context=UnusedContext(), recall=core.recall,

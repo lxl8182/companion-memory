@@ -12,10 +12,10 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from companion_memory.adapters.model_http import ModelCallError
-from companion_memory.service.management import ManagementApi
-from companion_memory.service.memory_service import MemoryService, ServiceSettings
-from companion_memory.service.server import MemoryApi, build_server
+from rin_memory.adapters.model_http import ModelCallError
+from rin_memory.service.management import ManagementApi
+from rin_memory.service.memory_service import MemoryService, ServiceSettings
+from rin_memory.service.server import MemoryApi, build_server
 
 
 class Model:
@@ -220,7 +220,7 @@ class ServiceCloseoutTests(unittest.TestCase):
         # card change on its own. Seed the mature understanding a real
         # conversation would have produced, resting on two independent
         # experiences, and let the fact ride along as the explanation source.
-        from companion_memory.domain.growth_evidence import support_basis_from_facts
+        from rin_memory.domain.growth_evidence import support_basis_from_facts
         understanding = {
             "id": "ref_understanding",
             "text": "用户喜欢温柔、具体的表达",

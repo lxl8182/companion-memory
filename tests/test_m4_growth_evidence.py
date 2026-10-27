@@ -26,15 +26,15 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import (
     CorrectionRequest,
     DeletionRequest,
     DeletionTarget,
     Scope,
 )
-from companion_memory.domain.evolution import EvolutionSettings
-from companion_memory.domain.growth_evidence import (
+from rin_memory.domain.evolution import EvolutionSettings
+from rin_memory.domain.growth_evidence import (
     EVIDENCE_KIND_FLAGS,
     apply_support_removal_to_row,
     eligibility_of_row,
@@ -46,7 +46,7 @@ from companion_memory.domain.growth_evidence import (
     support_basis_from_row,
     summarize_basis,
 )
-from companion_memory.domain.reflection import PROMOTION_RULES
+from rin_memory.domain.reflection import PROMOTION_RULES
 
 
 class MutableClock:

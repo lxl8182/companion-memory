@@ -52,7 +52,7 @@ async def durable_demo() -> dict:
         event_type="user_message", text="这条事件会真正落盘。",
         occurred_at=datetime.now(timezone.utc), content_class="chat",
     )
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         sink = build_durable_event_store(memory_root=root)
         first = await sink.append(event)
@@ -82,7 +82,7 @@ async def correction_deletion_demo() -> dict:
     of the deleted source is rejected instead of resurrecting it. Everything
     is re-read from a fresh stack on the same root.
     """
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         core = build_memory_core(memory_root=root)
         core.recover("demo")
@@ -170,7 +170,7 @@ async def extraction_demo() -> dict:
     window compresses into a head memo message (the summarized prefix moves out
     of recent but stays in the time index).
     """
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         core = build_memory_core(memory_root=root, model=_DemoModel())
         core.recover("demo")
@@ -278,7 +278,7 @@ async def reflection_growth_demo() -> dict:
     support; a deletion narrows the reflection and retracting the growth stops
     serving its derived persona row. Everything is re-read from a fresh stack.
     """
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         clock = _DemoClock()
         model = _DemoReflectionModel()
@@ -432,7 +432,7 @@ async def recall_demo() -> dict:
     explicit correction hides the replaced fact while keeping the correction
     block visible.
     """
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         core = build_memory_core(
             memory_root=root, clock=_DemoClock(),
@@ -536,7 +536,7 @@ async def standalone_closed_loop_demo() -> dict:
     (reconcile/outbox/derive/delete-retry), an entry deletion, and a restart
     that re-reads the same state version.
     """
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         clock = _DemoClock()
         core = build_memory_core(
@@ -619,7 +619,7 @@ async def persona_card_demo() -> dict:
     source deletion that removes the dependent section, and a restart that
     keeps the current revision.
     """
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         clock = _DemoClock()
         core = build_memory_core(memory_root=root, clock=clock)
@@ -692,7 +692,7 @@ async def persona_publish_demo() -> dict:
     session, the game planner poll pairs on the version, and rollback restores
     an earlier version only when explicitly allowed.
     """
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         clock = _DemoClock()
         core = build_memory_core(memory_root=root, clock=clock)
@@ -828,7 +828,7 @@ async def persona_evolution_demo() -> dict:
     The card is never written by this path; a second identical request is a
     duplicate, and a frozen section rejects automatic proposals.
     """
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         clock = _DemoClock()
         model = _EvolutionModel()
@@ -898,7 +898,7 @@ async def persona_admin_demo() -> dict:
     card is only changed by that explicit action, and the switch is persisted
     separately from the card.
     """
-    with tempfile.TemporaryDirectory(prefix="companion-memory-demo-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rin-memory-demo-") as tmp:
         root = Path(tmp) / "memory"
         clock = _DemoClock()
         model = _EvolutionModel()

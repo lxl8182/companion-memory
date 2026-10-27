@@ -6,11 +6,11 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.errors import CorruptStoreError, WriteRejected
-from companion_memory.persistence import (
+from rin_memory.errors import CorruptStoreError, WriteRejected
+from rin_memory.persistence import (
     FileSystemAtomicStore, FileSystemRoots, NullWritePermit, RejectingWritePermit,
 )
-from companion_memory.persistence.recent import (
+from rin_memory.persistence.recent import (
     RECENT_FILENAME,
     RecentStore,
     is_summary_message,

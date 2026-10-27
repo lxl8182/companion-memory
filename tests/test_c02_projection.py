@@ -11,15 +11,15 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.api import MemoryEngine
-from companion_memory.contracts import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.api import MemoryEngine
+from rin_memory.contracts import (
     CorrectionRequest,
     DeletionRequest,
     DeletionTarget,
     Scope,
 )
-from companion_memory.errors import NotConfiguredError
+from rin_memory.errors import NotConfiguredError
 
 
 class FixedClock:

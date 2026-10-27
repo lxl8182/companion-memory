@@ -16,9 +16,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from companion_memory.persistence.persona_card import parse_name_line, with_name_line
-from companion_memory.service.management import LEGACY_NAME_FILE, ManagementApi
-from companion_memory.service.memory_service import MemoryService, ServiceSettings
+from rin_memory.persistence.persona_card import parse_name_line, with_name_line
+from rin_memory.service.management import LEGACY_NAME_FILE, ManagementApi
+from rin_memory.service.memory_service import MemoryService, ServiceSettings
 
 IDENTITY = "性别: 女\n年龄: 16岁\n身份: 主人身边的伙伴。"
 

@@ -37,7 +37,7 @@ from typing import Any, Mapping
 from ..errors import RootLockConflict
 
 #: One lock per data root, in the root itself (never inside a character dir).
-ROOT_LOCK_FILENAME = ".companion_memory.root.lock"
+ROOT_LOCK_FILENAME = ".rin_memory.root.lock"
 #: The descriptive owner record lives in bytes [0, _HEADER_BYTES). The OS lock
 #: is a single byte *after* it, so a diagnostic read by another process is not
 #: blocked by the lock itself (Windows byte-range locks deny reads of the
@@ -66,7 +66,7 @@ def canonical_root(path: Path | str) -> Path:
 
 
 def root_lock_path(root: Path | str) -> Path:
-    """Return `<canonical root>/.companion_memory.root.lock`."""
+    """Return `<canonical root>/.rin_memory.root.lock`."""
     return canonical_root(root) / ROOT_LOCK_FILENAME
 
 

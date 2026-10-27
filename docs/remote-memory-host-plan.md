@@ -11,7 +11,7 @@
 
 ### 1.1 要达成的
 
-- `companion-memory` 服务常驻服务器，**人格卡、事实、召回、更正删除、发布版本**只有服务器上这一份。
+- `rin-memory` 服务常驻服务器，**人格卡、事实、召回、更正删除、发布版本**只有服务器上这一份。
 - 服务器上的 `memory/`、`host/`、`state/` 是**唯一权威数据根**，本机不再保留副本。
 - N.E.K.O（本机）与 DSH 记忆插件（本机）都通过隧道连过去，行为与今天完全一致。
 - 管理台仍可在本机浏览器打开，用的还是 `http://127.0.0.1:48931`。
@@ -32,9 +32,9 @@
 
 | 位置 | 约束 |
 |---|---|
-| `src/companion_memory/stack_config.py:157` | `if host != "127.0.0.1": raise StackConfigError(...)` |
-| `src/companion_memory/service/server.py:1025` | `allowed_hosts` 写死 `("127.0.0.1","localhost","::1")` |
-| `dsh-companion-memory/config.js:115`、`memory-client.js:123` | 两处 `hostname !== '127.0.0.1'` 直接抛错 |
+| `src/rin_memory/stack_config.py:157` | `if host != "127.0.0.1": raise StackConfigError(...)` |
+| `src/rin_memory/service/server.py:1025` | `allowed_hosts` 写死 `("127.0.0.1","localhost","::1")` |
+| `dsh-rin-memory/config.js:115`、`memory-client.js:123` | 两处 `hostname !== '127.0.0.1'` 直接抛错 |
 
 **隧道方案让客户端的视角仍然是 127.0.0.1**，上述 4 处全部不用碰。这是它比「改绑定地址」更省、
 也更容易回滚的根本原因。N.E.K.O 侧本来就只读配置里的 `url` 字段
@@ -46,7 +46,7 @@
 
 ```
         ┌──────────────────── 服务器（常驻） ────────────────────┐
-        │  companion-memory 服务  127.0.0.1:48931               │
+        │  rin-memory 服务  127.0.0.1:48931               │
         │  ├─ memory/  host/  state/   ← 唯一数据根              │
         │  └─ state/client_tokens.json ← 客户端令牌             │
         └───────────────────────▲───────────────────────────────┘
@@ -70,7 +70,7 @@
 
 ```powershell
 # 本机停服务与本机宿主
-cd F:\game\projectNEKO\companion-memory
+cd F:\game\projectNEKO\rin-memory
 .\tools\stack.ps1 stop -Config F:\game\projectNEKO\companion-runtime\config\stack.toml
 
 # 整目录备份（memory 11 MB + host 65 MB + logs 3 MB）
@@ -83,19 +83,19 @@ Compress-Archive -Path F:\game\projectNEKO\companion-runtime\* `
 ### 步骤 1：服务器准备
 
 ```bash
-# 选一个长期目录，例如 /srv/companion-memory
-sudo mkdir -p /srv/companion-memory && sudo chown "$USER" /srv/companion-memory
+# 选一个长期目录，例如 /srv/rin-memory
+sudo mkdir -p /srv/rin-memory && sudo chown "$USER" /srv/rin-memory
 
 # 取源码（仓库已公开）
-git clone https://github.com/lxl8182/rin-memory.git /srv/companion-memory/src
-cd /srv/companion-memory/src
+git clone https://github.com/lxl8182/rin-memory.git /srv/rin-memory/src
+cd /srv/rin-memory/src
 uv build --wheel
 uv venv .venv --python 3.11
 uv pip install --python .venv/bin/python dist/rin_memory-0.1.0.dev7-py3-none-any.whl
 ```
 
-> `tools/stack.ps1` 是 PowerShell 包装，**服务器上用已安装的 `companion-stack` CLI 代替**：
-> `companion-stack init|start|stop|status --config <绝对路径>`。该 CLI 不依赖工作目录。
+> `tools/stack.ps1` 是 PowerShell 包装，**服务器上用已安装的 `rin-stack` CLI 代替**：
+> `rin-stack init|start|stop|status --config <绝对路径>`。该 CLI 不依赖工作目录。
 
 ### 步骤 2：迁移数据根
 
@@ -106,13 +106,13 @@ uv pip install --python .venv/bin/python dist/rin_memory-0.1.0.dev7-py3-none-any
 scp -r F:/game/projectNEKO/companion-runtime/memory \
        F:/game/projectNEKO/companion-runtime/host \
        F:/game/projectNEKO/companion-runtime/state \
-       user@server:/srv/companion-memory/
+       user@server:/srv/rin-memory/
 ```
 
 服务器上确认 `state/client_tokens.json` 存在且权限为 600：
 
 ```bash
-chmod 600 /srv/companion-memory/state/client_tokens.json
+chmod 600 /srv/rin-memory/state/client_tokens.json
 ```
 
 该文件含两个键（值是从未提交过的令牌）：
@@ -126,7 +126,7 @@ chmod 600 /srv/companion-memory/state/client_tokens.json
 
 | 字段 | 本机值 | 服务器值 | 为什么 |
 |---|---|---|---|
-| `runtime.python` | `F:\...\Scripts\python.exe` | `/srv/companion-memory/src/.venv/bin/python` | 平台路径 |
+| `runtime.python` | `F:\...\Scripts\python.exe` | `/srv/rin-memory/src/.venv/bin/python` | 平台路径 |
 | `runtime.package_version` | `0.1.0.dev4` | 与服务器实际安装版本一致 | 不一致会直接启动失败 |
 | `host.enabled` | `true` | **`false`** | 否则会尝试拉起 N.E.K.O 宿主；服务器上没有 N.E.K.O，必然失败 |
 
@@ -135,9 +135,9 @@ chmod 600 /srv/companion-memory/state/client_tokens.json
 ### 步骤 4：起服务
 
 ```bash
-companion-stack init   --config /srv/companion-memory/config/stack.toml
-companion-stack start  --config /srv/companion-memory/config/stack.toml
-companion-stack status --config /srv/companion-memory/config/stack.toml
+rin-stack init   --config /srv/rin-memory/config/stack.toml
+rin-stack start  --config /srv/rin-memory/config/stack.toml
+rin-stack status --config /srv/rin-memory/config/stack.toml
 curl -s http://127.0.0.1:48931/v1/health
 ```
 
@@ -146,16 +146,16 @@ curl -s http://127.0.0.1:48931/v1/health
 SSH 隧道会断，服务不能跟着断。用 systemd 托管服务本体；隧道由客户端侧负责重连。
 
 ```ini
-# /etc/systemd/system/companion-memory.service
+# /etc/systemd/system/rin-memory.service
 [Unit]
-Description=companion-memory service
+Description=rin-memory service
 After=network-online.target
 
 [Service]
 Type=simple
 User=youruser
-ExecStart=/srv/companion-memory/src/.venv/bin/companion-stack start --config /srv/companion-memory/config/stack.toml
-ExecStop=/srv/companion-memory/src/.venv/bin/companion-stack stop --config /srv/companion-memory/config/stack.toml
+ExecStart=/srv/rin-memory/src/.venv/bin/rin-stack start --config /srv/rin-memory/config/stack.toml
+ExecStop=/srv/rin-memory/src/.venv/bin/rin-stack stop --config /srv/rin-memory/config/stack.toml
 Restart=on-failure
 RestartSec=5
 
@@ -163,7 +163,7 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-> 注意：`companion-stack start` 自身会拉起前台进程并等到就绪，用它做 `Type=simple` 前
+> 注意：`rin-stack start` 自身会拉起前台进程并等到就绪，用它做 `Type=simple` 前
 > 需实测确认不会立刻返回；若会返回，改用 `Type=forking` 或在服务内部加 `--foreground`。
 > **这一步动手时先验证，不要照抄。**
 
@@ -239,7 +239,7 @@ tokenFile: F:\...\dsh_tokens.json  # 或本机放一个只含该键的 JSON
 ## 6. 回滚
 
 1. 客户端停隧道、停 DSH 插件的 `enabled`、N.E.K.O 停服。
-2. 服务器 `companion-stack stop`，把 `memory/`、`host/`、`state/` 取回本机。
+2. 服务器 `rin-stack stop`，把 `memory/`、`host/`、`state/` 取回本机。
 3. 本机 `stack.toml` 的 `host.enabled` 改回 `true`，`runtime.python` 改回 Windows 路径。
 4. `.\tools\stack.ps1 start`，跑验收项 1–6。
 

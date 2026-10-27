@@ -24,7 +24,7 @@ for extra in (REPO, REPO / "webui", REPO / "src"):
     if str(extra) not in sys.path:
         sys.path.insert(0, str(extra))
 
-from companion_memory.service.listening import (  # noqa: E402
+from rin_memory.service.listening import (  # noqa: E402
     SO_EXCLUSIVEADDRUSE,
     exclusive_address_requested,
     harden_listening_socket,
@@ -74,7 +74,7 @@ class ExclusiveBindTests(unittest.TestCase):
         )
 
     def test_service_transport_refuses_a_second_bind(self):
-        from companion_memory.service.server import build_server
+        from rin_memory.service.server import build_server
 
         class _Api:
             def health(self):
@@ -101,7 +101,7 @@ class StopReleasesPortTests(unittest.TestCase):
     """`stack.stop()` must verify the socket, not just the recorded PID."""
 
     def test_port_held_detects_a_live_listener(self):
-        from companion_memory.stack import _port_held
+        from rin_memory.stack import _port_held
 
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 0))
@@ -120,7 +120,7 @@ class StopReleasesPortTests(unittest.TestCase):
         self.assertTrue(deadline_free, "port never became free after close")
 
     def test_port_held_is_false_for_an_unused_port(self):
-        from companion_memory.stack import _port_held
+        from rin_memory.stack import _port_held
 
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
@@ -128,7 +128,7 @@ class StopReleasesPortTests(unittest.TestCase):
         self.assertFalse(_port_held("127.0.0.1", port))
 
     def test_kill_tree_ignores_a_non_pid(self):
-        from companion_memory.stack import _kill_tree
+        from rin_memory.stack import _kill_tree
 
         # Must not raise for the shapes a half-written state file can hold.
         for value in (None, 0, -1, "not-a-pid", {}):

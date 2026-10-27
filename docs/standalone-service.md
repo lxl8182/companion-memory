@@ -1,9 +1,9 @@
 # 独立服务化方案：运行所有权、对话提交与召回优化
 
-本文定义 companion-memory 独立服务的运行方式、接口、故障恢复和验收条件。实现继续复用已有核心，服务层负责 HTTP、模型适配和生命周期。
+本文定义 rin-memory 独立服务的运行方式、接口、故障恢复和验收条件。实现继续复用已有核心，服务层负责 HTTP、模型适配和生命周期。
 
 - 最后更新：2026-10-24
-- 适用根：`F:\game\projectNEKO\companion-memory`
+- 适用根：`F:\game\projectNEKO\rin-memory`
 - 文档用途：服务化合同、实现复核与接入范围；具体缺口见 [§8.1 复核问题](#service-review-20261024)，S05 执行范围见 [§8.2](#s05-scope)
 - 实施状态与完成证据维护在 [roadmap.md](roadmap.md) 的 **§2.2 独立服务化台账（S01—S07）**，本文件不另设进度表
 - 已有实现（2026-10-24）：**S01 写者所有权**（§2.2）、**S02 整轮提交与恢复**（§3.2—§3.4）、**S03 分类与中文链路**（§5.1、§5.2）、**S04 模型适配器与常驻服务**（§3.1、§4.1—§4.3）、**S06 召回基线**（§6.2）。本次复核发现 S02/S04 存在七项接入前需修复的问题，台账已恢复为进行中；下文带日期的交付说明保留当时成果，当前缺口以 §8.1 为准。§2.3 切换与 §7 接入方职责属 S05，§6.3—§6.5 属 S07（按基线收益决定是否启动）
@@ -14,7 +14,7 @@
 
 ## 1. 目标与现状
 
-目标是让 companion-memory 在不启动 N.E.K.O 的环境中，能够接收对话、生成可选回复、提炼记忆、提供上下文、管理人格，并持续运行与安全重启。N.E.K.O、管理台和其他接入方使用同一个权威实例。
+目标是让 rin-memory 在不启动 N.E.K.O 的环境中，能够接收对话、生成可选回复、提炼记忆、提供上下文、管理人格，并持续运行与安全重启。N.E.K.O、管理台和其他接入方使用同一个权威实例。
 
 当前已有记忆、删除更正、人格版本与演化核心，CLI 的 `run --loop` 和 WebUI HTTP 服务也已存在。2026-10-24 起，交付目标改为从新配置和空数据根启动独立系统，实机验收按 S05 的 N01—N15 推进。独立服务需要补齐：
 
@@ -37,7 +37,7 @@
 
 | 模式 | 核心、屏障与维护循环的所有者 | N.E.K.O | WebUI |
 |---|---|---|---|
-| 独立服务 | companion-memory 服务进程 | HTTP 适配器转发记忆请求 | 经独立服务 API 读写 |
+| 独立服务 | rin-memory 服务进程 | HTTP 适配器转发记忆请求 | 经独立服务 API 读写 |
 
 管理台由权威进程同源提供静态页面和 API。在线管理台不再建立第二份 `MemoryCore` 或直接读写 JSON；离线开发工具可使用任意数据根。
 
@@ -57,7 +57,7 @@ S01 已统一使用**规范化数据根的进程所有权锁**。新运行链路
 
 验收覆盖“服务＋服务”“服务＋离线写工具”、同时争抢、异常退出再启动和路径别名；同时检查宿主和 WebUI 均未创建本地核心。第二个写者应在任何数据修改前被拒绝。
 
-> **S01 已实现（2026-10-23）**：`persistence/ownership.py` 提供 `canonical_root` + `acquire_root_lock` + `read_root_lock`，锁文件为 `<root>/.companion_memory.root.lock`。已接入 CLI `run`/`migrate`/`rollback`、宿主 `engine_bridge/runtime.py`、WebUI 可写在线模式；只读入口不取锁。实现要点与上面的要求一一对应：规范化真实路径（大小写/`.`/`..`/尾分隔符/目录别名同一把锁）；互斥来自 OS 文件锁，`pid`/`mode` 写入锁记录仅用于排障；**不再有「内容不可读即清理旧锁」**——原实现的 `O_CREAT|O_EXCL` 建文件后才写 pid 存在真实竞态，已改为先取锁再写记录；锁记录位于锁定字节之前，因此持锁期间其他进程仍可读到持有者。进程异常退出由 OS 自动释放，重启无需清理。
+> **S01 已实现（2026-10-23）**：`persistence/ownership.py` 提供 `canonical_root` + `acquire_root_lock` + `read_root_lock`，锁文件为 `<root>/.rin_memory.root.lock`。已接入 CLI `run`/`migrate`/`rollback`、宿主 `engine_bridge/runtime.py`、WebUI 可写在线模式；只读入口不取锁。实现要点与上面的要求一一对应：规范化真实路径（大小写/`.`/`..`/尾分隔符/目录别名同一把锁）；互斥来自 OS 文件锁，`pid`/`mode` 写入锁记录仅用于排障；**不再有「内容不可读即清理旧锁」**——原实现的 `O_CREAT|O_EXCL` 建文件后才写 pid 存在真实竞态，已改为先取锁再写记录；锁记录位于锁定字节之前，因此持锁期间其他进程仍可读到持有者。进程异常退出由 OS 自动释放，重启无需清理。
 >
 > S04 已将独立 HTTP 服务接入同一根锁；退出时的在途工作与锁释放按 R02 验收。上述 S01 记录保留历史接入成果，S05 运行入口以独立服务为准。公网/多机场景另行设计。
 
@@ -427,7 +427,7 @@ HTTP 返回成功表示结果已提交。实际显示、播放、人格采用和
 **已修复**：`domain/turn_results.py` 的 `TurnResultCleaner` 作为删除步骤 `turn_results` 运行（已计入 `CONTENT_STEPS`），`CorrectionTurnInvalidator` 接入更正派生失效链；`TurnRecord` 持久化 `subject`。验收测试走真实 `forget()`，断言 410 且记录正文已清空。
 
 - **现象**：先通过 `/v1/turns` 提交含回复的轮次，再调用真实 `deletion_service.forget()`，删除回执为 `completed`，查询请求结果仍返回 `committed` 和旧回复正文。生成依据检查 `_basis_moved()` 也固定返回 `False`。
-- **位置**：[composition.py](../src/companion_memory/adapters/composition.py) 的删除/更正装配、[turns.py](../src/companion_memory/domain/turns.py) 的 `invalidate_sources()`、[server.py](../src/companion_memory/service/server.py) 的 `_basis_moved()` 与 `request_status()`。已有失效方法尚未接入实际删除/更正流程；手动调用该方法的测试绕过了缺口。
+- **位置**：[composition.py](../src/rin_memory/adapters/composition.py) 的删除/更正装配、[turns.py](../src/rin_memory/domain/turns.py) 的 `invalidate_sources()`、[server.py](../src/rin_memory/service/server.py) 的 `_basis_moved()` 与 `request_status()`。已有失效方法尚未接入实际删除/更正流程；手动调用该方法的测试绕过了缺口。
 - **修复要求**：实际删除/更正必须联动请求结果、上下文凭据及相关缓存；生成和提交之间复查使用的来源、范围与版本。失效结果清除正文，仅保留去重与屏障所需标识。
 - **验收**：从实际删除/更正入口操作后，结果查询和同键重试均不返回失效正文；生成途中失效应终止提交或重新获取有效依据；重启及 journal 回放后仍保持失效。删除结果按合同返回 410。
 
@@ -436,7 +436,7 @@ HTTP 返回成功表示结果已提交。实际显示、播放、人格采用和
 **已修复**：`stop()` 先递增代次拒绝新请求，再用 `_drain` 以线程事件等待在途请求结束（默认 30s 上限，超时如实报告 `abandoned`），然后停后台、最后释放根锁；`assert_current()` 在提交前拒绝失去代次的请求。`begin_request()` 会清 `_drained`——原实现事件初始为 set，导致排空立即返回，这是测试抓到的真实缺陷。
 
 - **现象**：让 `/chat` 的模型调用挂起，调用 `MemoryService.stop()` 后，新服务可取得同根所有权；再放行旧模型，旧请求仍提交成功。两个所有者的写入期发生重叠。
-- **位置**：[memory_service.py](../src/companion_memory/service/memory_service.py) 的 `stop()`、[server.py](../src/companion_memory/service/server.py) 的 HTTP 请求线程与服务退出顺序。当前仅停止后台维护，未排空在途生成/提交。
+- **位置**：[memory_service.py](../src/rin_memory/service/memory_service.py) 的 `stop()`、[server.py](../src/rin_memory/service/server.py) 的 HTTP 请求线程与服务退出顺序。当前仅停止后台维护，未排空在途生成/提交。
 - **修复要求**：退出先关闭新请求入口，等待或取消在途请求，并等待实际工作结束；所有写任务结束后再释放根锁。已失去本代运行资格的请求禁止继续提交，取消协程时同时处理仍在运行的线程任务。
 - **验收**：挂起模型或提交的情况下发起停机，锁在旧写任务结束前始终不可被接管；新实例取得锁后，旧实例不得新增记录；正常退出与强制中断后的恢复分别覆盖。
 
@@ -445,7 +445,7 @@ HTTP 返回成功表示结果已提交。实际显示、播放、人格采用和
 **已修复**：`subject/scene/session_id/client_id` 贯穿上下文构建、`context_receipt_id` 摘要与 `request_status` 查询；`TurnRecord` 新增 `subject`，跨主体查同一 request_id 按“未知”处理，不泄露存在性。
 
 - **现象**：查询同一条私有事实，直接调用核心并传 `subject="group:other"` 时无结果；向 `/v1/context` 传相同主体时，API 仍返回该私有事实。接口读取了文本，但未把主体/场景完整传入核心上下文构建。
-- **位置**：[server.py](../src/companion_memory/service/server.py) 的 `context()`、`_build_turn_request()` 和 `request_status()`，以及请求指纹与结果查询范围。
+- **位置**：[server.py](../src/rin_memory/service/server.py) 的 `context()`、`_build_turn_request()` 和 `request_status()`，以及请求指纹与结果查询范围。
 - **修复要求**：将 character、subject、session、scene 及来源适用范围贯穿上下文、人格投影、生成、入库、去重和结果读取；明确 client_id 的来源身份与访问边界，防止切换客户端或主体后误复用其他范围的结果。
 - **验收**：用同一组事实分别走核心和 HTTP 入口，私聊/群聊、宿主/游戏/run 的排除结果一致；跨主体的同 request_id/turn_id 不串用正文；游戏专属内容不进入通用人格或宿主上下文。
 
@@ -454,7 +454,7 @@ HTTP 返回成功表示结果已提交。实际显示、播放、人格采用和
 **已修复**：`ingest_turn(occurred_at=...)` 接受稳定业务时间并随记录持久化，重试复用首次值；`_persist` 捕获 ingest 异常后标记 `failed`（可重试），不再留下 `pending` 被误判为并发。内容真变化仍返回冲突。
 
 - **现象**：使用默认时钟，在原文保存后让 `outbox.enqueue()` 抛出异常；重启并重试同一请求，得到 `failed / source_key_reused_with_different_payload`，待处理队列仍为 0。
-- **位置**：[extraction.py](../src/companion_memory/domain/extraction.py) 的 `ingest_turn()` 每次重新生成 `occurred_at`；[records.py](../src/companion_memory/persistence/records.py) 的来源指纹包含该字段；[turns.py](../src/companion_memory/domain/turns.py) 先 ingest 再提交整轮 journal。
+- **位置**：[extraction.py](../src/rin_memory/domain/extraction.py) 的 `ingest_turn()` 每次重新生成 `occurred_at`；[records.py](../src/rin_memory/persistence/records.py) 的来源指纹包含该字段；[turns.py](../src/rin_memory/domain/turns.py) 先 ingest 再提交整轮 journal。
 - **修复要求**：首次接收的业务时间与规范化输入在重试/恢复时保持稳定；让来源登记、原文、提炼意图与请求状态可幂等续作。固定 `occurred_at` 的语义或复用首次登记值，不能简单忽略真实内容变化导致的来源冲突。
 - **验收**：故障注入后推进时钟、重启并重试，最终只有一轮原文、一个有效提炼任务和一个提交结果；响应丢失后的重放不重复生成；真正修改消息内容仍返回冲突。
 
@@ -463,7 +463,7 @@ HTTP 返回成功表示结果已提交。实际显示、播放、人格采用和
 **已修复**：`_generate` 先按请求范围构建 `build_turn_context` 并把渲染块注入 system 消息（失败降级为空块，不让整轮失败）；服务生成的回复以 `ai` 消息追加进 recent/原文，外部已完成轮次不重复追加。
 
 - **现象**：在核心上下文入口放置可观测替身，`/chat` 成功后调用次数为 0；recent 只有传入的 human 消息，生成的 assistant 回复只存在于请求结果表。
-- **位置**：[server.py](../src/companion_memory/service/server.py) 的 `_generate()` 只拼人格卡与输入消息；[turns.py](../src/companion_memory/domain/turns.py) 的 `_persist()` 只把 `request.messages` 交给 ingest。
+- **位置**：[server.py](../src/rin_memory/service/server.py) 的 `_generate()` 只拼人格卡与输入消息；[turns.py](../src/rin_memory/domain/turns.py) 的 `_persist()` 只把 `request.messages` 交给 ingest。
 - **修复要求**：生成前按范围构建人格、更正、近期对话及可选召回上下文，并遵循 §3.3 的预算和降级顺序。服务生成模式将 assistant 回复纳入完整轮次原文/recent/后续提炼；外部已完成轮次按传入消息提交，避免重复追加回复。实际送达另行记录。
 - **验收**：先存入相关事实与更正，再调用 `/chat`，模型输入包含有效上下文；提交后 human/assistant 角色与顺序完整，重启和重试不重复轮次；未送达的回复不被标记为已送达。
 
@@ -472,7 +472,7 @@ HTTP 返回成功表示结果已提交。实际显示、播放、人格采用和
 **已修复**：只有 `config`/`auth` 这类不可恢复错误才 `degrade_chat()`；`timeout`/`rate_limit`/`transport` 记入 `last_model_error` 并保持 `chat_ready`，下次请求可成功；已提交结果回放不受模型可用性影响。
 
 - **现象**：替身模型首次 timeout，随后恢复正常；第二次 `/chat` 仍返回 `chat_unavailable`，模型调用总次数为 1，`chat_ready` 始终为 false。
-- **位置**：[server.py](../src/companion_memory/service/server.py) 在所有 `ModelCallError` 上调用 `degrade_chat()`，后续请求在调用模型前被拒绝；能力刷新仅在启动时发生。
+- **位置**：[server.py](../src/rin_memory/service/server.py) 在所有 `ModelCallError` 上调用 `degrade_chat()`，后续请求在调用模型前被拒绝；能力刷新仅在启动时发生。
 - **修复要求**：区分缺配置/鉴权错误与可恢复的超时、限流、传输故障；给可恢复故障提供有界重试或探测恢复路径，保留错误类别与 retryable 语义。已提交请求的结果回放独立于当前模型可用性。
 - **验收**：模型故障→恢复后，无需重启服务即可成功生成；限流遵守等待与容量限制；模型离线期间已提交结果仍可回放，存储与管理能力保持可用。
 
@@ -482,7 +482,7 @@ HTTP 返回成功表示结果已提交。实际显示、播放、人格采用和
 
 - **现象一**：HTTP 请求分别执行 `asyncio.run()`，共享 `HttpModelInvoker` 内的 `asyncio.Semaphore`；跨两个事件循环执行发生竞争的批次后，出现 `Semaphore ... is bound to a different event loop`。
 - **现象二**：配置并发上限 1，让底层 HTTP 工作线程阻塞，两次调用分别超时后仍有 2 个线程同时工作。协程退出释放了信号量，`to_thread()` 内的实际请求继续运行。
-- **位置**：[server.py](../src/companion_memory/service/server.py) 的 `_run()`、[model_http.py](../src/companion_memory/adapters/model_http.py) 的 `invoke()`。
+- **位置**：[server.py](../src/rin_memory/service/server.py) 的 `_run()`、[model_http.py](../src/rin_memory/adapters/model_http.py) 的 `invoke()`。
 - **修复要求**：服务共享异步资源由一个长期存活的事件循环管理；对实际模型请求实施有界并发与排队期限。调用方超时后，底层工作仍占用容量直到结束；停机应跟踪并排空这些工作。
 - **验收**：经真实 HTTP 入口连续运行多批并发请求，不出现跨循环异常；在超时/取消条件下测量实际在途调用，峰值始终不超过配置上限；队列等待和退出时间符合设定期限。
 
@@ -505,8 +505,8 @@ S05 的完整执行计划已独立为 [s05-new-system-plan.md](s05-new-system-pl
 - [s05-new-system-plan.md](s05-new-system-plan.md)：当前 S05 开发顺序、新配置/启动、验收及旧入口退役。
 - [closeout.md](closeout.md)：历史宿主接入与管理台合同参考；旧 C06 流程已由新计划替代。
 - [webui-console.md](webui-console.md)：当前管理台使用方式；服务接入落地时同步调整启动方式。
-- [cli.py](../src/companion_memory/cli.py)：既有路径校验、角色锁和独立维护入口。
-- [extraction.py](../src/companion_memory/domain/extraction.py)、[durable.py](../src/companion_memory/adapters/durable.py)：当前来源接收、原文、outbox 与恢复边界。
-- [recall.py](../src/companion_memory/domain/recall.py)、[contracts.py](../src/companion_memory/contracts.py)、[ports.py](../src/companion_memory/ports.py)：当前分词、向量路径、预算与模型端口。
-- [atomic.py](../src/companion_memory/persistence/atomic.py)：UTF-8 原子存储。
+- [cli.py](../src/rin_memory/cli.py)：既有路径校验、角色锁和独立维护入口。
+- [extraction.py](../src/rin_memory/domain/extraction.py)、[durable.py](../src/rin_memory/adapters/durable.py)：当前来源接收、原文、outbox 与恢复边界。
+- [recall.py](../src/rin_memory/domain/recall.py)、[contracts.py](../src/rin_memory/contracts.py)、[ports.py](../src/rin_memory/ports.py)：当前分词、向量路径、预算与模型端口。
+- [atomic.py](../src/rin_memory/persistence/atomic.py)：UTF-8 原子存储。
 - [webui/server.py](../webui/server.py)：当前独立 WebUI 核心装配；在线模式改为访问权威实例。

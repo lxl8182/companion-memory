@@ -1,6 +1,6 @@
 # 记忆与陪伴连续性改造方案
 
-日期：2026-10-27。适用范围：独立 companion-memory 核心、DSH 记忆插件、QQ bridge，以及消费同一核心的 N.E.K.O 文字端。
+日期：2026-10-27。适用范围：独立 rin-memory 核心、DSH 记忆插件、QQ bridge，以及消费同一核心的 N.E.K.O 文字端。
 
 本文定义待开发方案。批次状态统一维护在 [roadmap.md](roadmap.md) 的 MC 专项，不在本文维护第二份完成台账。现有实现以本机工作树为开发起点，所有编码、修复、测试和构建都在本机完成；服务器承担安装、运行和真实渠道验收。
 
@@ -25,8 +25,8 @@
 
 | 部分 | 本机开发位置 | 服务器当前运行位置 | 交付形式 |
 |---|---|---|---|
-| 记忆核心、HTTP、管理台 | `F:\game\projectNEKO\companion-memory` | `/opt/companion-memory/venv` 下的安装包 | wheel |
-| DSH 记忆与咒语接入 | `F:\game\projectNEKO\dsh-companion-memory` | DSH web profile 的 `@local/dsh-companion-memory` | npm tgz，经 DSH 插件流程安装 |
+| 记忆核心、HTTP、管理台 | `F:\game\projectNEKO\rin-memory` | `/opt/rin-memory/venv` 下的安装包 | wheel |
+| DSH 记忆与咒语接入 | `F:\game\projectNEKO\dsh-rin-memory` | DSH web profile 的 `@local/dsh-rin-memory` | npm tgz，经 DSH 插件流程安装 |
 | QQ 收发与发送队列 | `E:\dsh\plugins\dsh-qq-bridge` | DSH web profile 的 `@yachangchang/dsh-qq-bridge` | 构建后的 npm tgz，经 DSH 插件流程安装 |
 | N.E.K.O 消费适配 | `F:\game\projectNEKO\N.E.K.O` | 本机新 stack 的宿主 | 按宿主现有部署流程 |
 | 服务器运行数据 | 本机测试使用自己的运行根 | `/srv/companion-runtime`、`/root/.dsh`、`/srv/snowluma` | 留在各自机器，独立于源码发布 |
@@ -72,8 +72,8 @@ Git 负责说明代码来自哪个版本、包含哪些修改、如何回到上�
 
 2026-10-27 更新：三个开发目录均已有自己的 Git 仓库与远端。后续先核对现有基线和包白名单，再完善版本发布闭环。
 
-- `companion-memory` 首次提交为 `9725445`，`origin` 为 `lxl8182/companion-memory`。
-- `dsh-companion-memory` 已有独立仓库，`origin` 为 `lxl8182/dsh-companion-memory`。
+- `rin-memory` 首次提交为 `9725445`，`origin` 为 `lxl8182/rin-memory`。
+- `dsh-rin-memory` 已有独立仓库，`origin` 为 `lxl8182/dsh-rin-memory`。
 - QQ bridge 的 `origin` 为 `lxl8182/dsh-qq-bridge`，原作者 `TomoyoNatsume/dsh-qq-bridge` 保留为 `upstream`。
 - 核心源码及水彩资源目录存在 `.bak-uiopt` 文件。发布白名单需要排除备份，现有文件保留供本机核对。
 
@@ -96,8 +96,8 @@ MC00 继续核对包白名单、明确版本与发布清单、构建和安装路
 {
   "release_id": "20261027-continuity-01",
   "sources": {
-    "companion-memory": "<完整提交SHA>",
-    "dsh-companion-memory": "<完整提交SHA>",
+    "rin-memory": "<完整提交SHA>",
+    "dsh-rin-memory": "<完整提交SHA>",
     "dsh-qq-bridge": "<完整提交SHA>"
   },
   "dirty": false,
@@ -457,7 +457,7 @@ MC02-A 可独立发布。MC02-B 以可用向量配置为执行条件；该条件
 - [当前进度与 S06/S07 基线](roadmap.md)
 - [独立服务合同](standalone-service.md)
 - [领域设计](design.md)
-- [DSH 接入计划](../../dsh-companion-memory/PLAN.md)
+- [DSH 接入计划](../../dsh-rin-memory/PLAN.md)
 - [Git bundle 官方文档](https://git-scm.com/docs/git-bundle)：用于没有托管远端时传输 Git 历史。
 - [pip 可重复安装文档](https://pip.pypa.io/en/stable/topics/repeatable-installs/)：固定依赖与包安装的依据。
 - [LongMemEval](https://arxiv.org/abs/2410.10813)：长期记忆验收涉及跨会话、时间和认识更新等能力。

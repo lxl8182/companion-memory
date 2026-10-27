@@ -21,9 +21,9 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import DeletionRequest, DeletionTarget, Scope
-from companion_memory.domain.working_summary import SECTION_NAMES
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import DeletionRequest, DeletionTarget, Scope
+from rin_memory.domain.working_summary import SECTION_NAMES
 
 
 class MutableClock:
@@ -246,7 +246,7 @@ class OutputVisibilityTests(M5Base):
         self.assertEqual(metadata.get("content_class"), "companion_output")
         self.assertEqual(metadata.get("output_id"), created.record.output_id)
         # companion_output is a plugin-only class: it never feeds extraction.
-        from companion_memory.classification import is_extractable
+        from rin_memory.classification import is_extractable
         self.assertFalse(is_extractable("companion_output"))
 
     async def test_deleted_cause_invalidates_the_output(self):
@@ -569,9 +569,9 @@ class HttpOutputTests(unittest.TestCase):
         import os
         from unittest.mock import patch
 
-        from companion_memory.service.management import ManagementApi
-        from companion_memory.service.memory_service import MemoryService, ServiceSettings
-        from companion_memory.service.server import MemoryApi, build_server
+        from rin_memory.service.management import ManagementApi
+        from rin_memory.service.memory_service import MemoryService, ServiceSettings
+        from rin_memory.service.server import MemoryApi, build_server
 
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -735,9 +735,9 @@ class ContextLayersTests(M5Base):
     """/v1/context gains the new layers additively; old keys keep their shape."""
 
     async def test_context_payload_adds_layers_without_changing_existing_keys(self):
-        from companion_memory.service.management import ManagementApi
-        from companion_memory.service.memory_service import MemoryService, ServiceSettings
-        from companion_memory.service.server import MemoryApi
+        from rin_memory.service.management import ManagementApi
+        from rin_memory.service.memory_service import MemoryService, ServiceSettings
+        from rin_memory.service.server import MemoryApi
 
         root = self.root / "svc"
         root.mkdir(parents=True, exist_ok=True)

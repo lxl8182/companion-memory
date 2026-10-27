@@ -36,7 +36,7 @@ for extra in (REPO, REPO / "webui", REPO / "src"):
 
 import server as webui_server  # noqa: E402
 
-from companion_memory.service.chat import (  # noqa: E402
+from rin_memory.service.chat import (  # noqa: E402
     ChatBridge,
     ChatError,
     DemoChatModel,
@@ -115,7 +115,7 @@ class ConsoleChatTests(unittest.TestCase):
         self.assertEqual(self.app.chat.history()["messages"], rows)
 
     def test_provider_reasoning_is_saved_separately_and_cleared_on_manual_edit(self):
-        from companion_memory.adapters.model_http import _extract_text
+        from rin_memory.adapters.model_http import _extract_text
         text = _extract_text(json.dumps({"choices": [{"message": {
             "content": "最终回复", "reasoning_content": "模型返回的原始思考",
         }}]}))
@@ -234,7 +234,7 @@ class ConsoleChatTests(unittest.TestCase):
         self.assertEqual(messages[-1], {"role": "user", "content": "我今天想喝乌龙茶"})
 
     def test_recoverable_model_failure_is_reported_and_retryable(self):
-        from companion_memory.adapters.model_http import ModelCallError
+        from rin_memory.adapters.model_http import ModelCallError
 
         model = RecordingModel(error=ModelCallError("slow", kind="timeout", retryable=True))
         self.app.chat._service.model = model

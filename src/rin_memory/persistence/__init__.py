@@ -2,7 +2,7 @@
 
 Every store here is synchronous (call through asyncio.to_thread), takes its
 data root and write permit by injection, and raises the typed errors from
-`companion_memory.errors` instead of guessing: corrupt content is never
+`rin_memory.errors` instead of guessing: corrupt content is never
 rewritten into an empty store, and an unsupported schema is rejected before
 any write.
 """

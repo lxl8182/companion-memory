@@ -11,10 +11,10 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.api import MemoryEngine
-from companion_memory.domain.evolution import EvolutionSettings
-from companion_memory.domain.evolution_scheduler import SchedulerSettings
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.api import MemoryEngine
+from rin_memory.domain.evolution import EvolutionSettings
+from rin_memory.domain.evolution_scheduler import SchedulerSettings
 
 
 class FixedClock:

@@ -14,19 +14,19 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from companion_memory.adapters.composition import build_memory_core
-from companion_memory.contracts import (
+from rin_memory.adapters.composition import build_memory_core
+from rin_memory.contracts import (
     CorrectionRequest, DeletionRequest, DeletionTarget, Scope,
 )
-from companion_memory.errors import (
+from rin_memory.errors import (
     CorrectionNotFoundError, CorruptStoreError, InvalidSchemaError,
 )
-from companion_memory.persistence.corrections import (
+from rin_memory.persistence.corrections import (
     CorrectionStore, fact_correction_id, preference_correction_id,
 )
-from companion_memory.persistence.atomic import FileSystemAtomicStore
-from companion_memory.persistence.permits import NullWritePermit
-from companion_memory.persistence.roots import FileSystemRoots
+from rin_memory.persistence.atomic import FileSystemAtomicStore
+from rin_memory.persistence.permits import NullWritePermit
+from rin_memory.persistence.roots import FileSystemRoots
 
 
 class FixedClock:

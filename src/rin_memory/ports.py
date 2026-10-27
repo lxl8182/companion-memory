@@ -1,7 +1,7 @@
 """Ports the core needs from its host (design §17.9.2).
 
 B02 freezes the storage-side ports. Each Protocol is the binding contract:
-concrete implementations live in `companion_memory.persistence`, host
+concrete implementations live in `rin_memory.persistence`, host
 adapters live in the N.E.K.O repository, and the core never imports the host.
 """
 

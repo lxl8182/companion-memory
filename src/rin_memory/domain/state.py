@@ -2,7 +2,7 @@
 
 The host keeps a short-term shared state per character/subject (thoughts, moods,
 concerns, progress) that ordinary chat, proactive chat and game control all read.
-This service owns the commit semantics; \`companion_memory.persistence.state\`
+This service owns the commit semantics; \`rin_memory.persistence.state\`
 owns the file shape and the pure apply/render rules.
 
 Frozen commit order (host \`memory/companion_state.py:1189-1223\`):

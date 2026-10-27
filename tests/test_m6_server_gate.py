@@ -28,9 +28,9 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
-from companion_memory.service.management import ManagementApi
-from companion_memory.service.memory_service import MemoryService, ServiceSettings
-from companion_memory.service.server import MemoryApi, build_server
+from rin_memory.service.management import ManagementApi
+from rin_memory.service.memory_service import MemoryService, ServiceSettings
+from rin_memory.service.server import MemoryApi, build_server
 
 
 class ServiceHarness(unittest.TestCase):
@@ -41,37 +41,37 @@ class ServiceHarness(unittest.TestCase):
         "qq": {
             "token_env": "TEST_QQ_TOKEN",
             "subjects": ["private"],
-            "plugin_id": "dsh-companion-memory",
+            "plugin_id": "dsh-rin-memory",
             "persona_teach": True,
-            "trusted_plugins": ["dsh-companion-memory"],
+            "trusted_plugins": ["dsh-rin-memory"],
         },
         # Same capability, but no trusted plugin: every plugin source is refused.
         "qq-untrusted": {
             "token_env": "TEST_QQ_UNTRUSTED_TOKEN",
             "subjects": ["private"],
-            "plugin_id": "dsh-companion-memory",
+            "plugin_id": "dsh-rin-memory",
             "persona_teach": True,
         },
         # Trusts the plugin id but has no teaching capability.
         "no-teach": {
             "token_env": "TEST_NO_TEACH_TOKEN",
             "subjects": ["private"],
-            "trusted_plugins": ["dsh-companion-memory"],
+            "trusted_plugins": ["dsh-rin-memory"],
         },
         # Trusted plugin and capability, but a different subject.
         "other-subject": {
             "token_env": "TEST_OTHER_SUBJECT_TOKEN",
             "subjects": ["friend"],
-            "plugin_id": "dsh-companion-memory",
+            "plugin_id": "dsh-rin-memory",
             "persona_teach": True,
-            "trusted_plugins": ["dsh-companion-memory"],
+            "trusted_plugins": ["dsh-rin-memory"],
         },
         # Trusts the plugin AND is scoped to two subjects, but has no teaching
         # capability. The pairing that a "trusted plugin" must never compensate.
         "trusted-only": {
             "token_env": "TEST_TRUSTED_ONLY_TOKEN",
             "subjects": ["private"],
-            "trusted_plugins": ["dsh-companion-memory"],
+            "trusted_plugins": ["dsh-rin-memory"],
         },
         # A multi-subject identity: the only shape where "request subject" and
         # "source subject" can legitimately both be inside the identity and still
@@ -79,9 +79,9 @@ class ServiceHarness(unittest.TestCase):
         "multi-subject": {
             "token_env": "TEST_MULTI_SUBJECT_TOKEN",
             "subjects": ["private", "friend"],
-            "plugin_id": "dsh-companion-memory",
+            "plugin_id": "dsh-rin-memory",
             "persona_teach": True,
-            "trusted_plugins": ["dsh-companion-memory"],
+            "trusted_plugins": ["dsh-rin-memory"],
         },
         # A plain host client: no plugin binding at all, so it speaks host keys.
         "desk": {
@@ -189,7 +189,7 @@ class PluginGateTests(ServiceHarness):
     """B: subjects AND trusted plugin AND character AND capability."""
 
     PLUGIN_KEY = (
-        "plugin:dsh-companion-memory:test:private:qq-session:req-1"
+        "plugin:dsh-rin-memory:test:private:qq-session:req-1"
     )
 
     def save_plugin_message(self, text="以后别每次都总结，像朋友一样接着聊"):
@@ -237,7 +237,7 @@ class PluginGateTests(ServiceHarness):
 
     def test_a_trusted_plugin_source_is_refused_for_another_character(self):
         self.save_plugin_message()
-        foreign = "plugin:dsh-companion-memory:someone-else:private:qq-session:req-1"
+        foreign = "plugin:dsh-rin-memory:someone-else:private:qq-session:req-1"
         status, payload = self.teach(foreign)
         self.assertEqual(status, 403, payload)
         self.assertEqual(payload["code"], "scope_mismatch")
@@ -285,7 +285,7 @@ class PluginGateTests(ServiceHarness):
         # The same identity really does hold the trusted id: it is the grant that
         # is missing, not the allow-list.
         identity = self.management.identity("trusted-only", "t-trusted-only")
-        self.assertEqual(identity["trusted_plugins"], ["dsh-companion-memory"])
+        self.assertEqual(identity["trusted_plugins"], ["dsh-rin-memory"])
         self.assertFalse(identity.get("persona_teach"))
 
     def test_a_foreign_request_subject_is_refused_by_the_transport(self):
@@ -311,7 +311,7 @@ class PluginGateTests(ServiceHarness):
         cited message may belong to the other one -- every individual gate passes
         and only the comparison refuses it.
         """
-        from companion_memory.service.console import ApiError
+        from rin_memory.service.console import ApiError
 
         self.save_plugin_message()
         identity = {
@@ -319,7 +319,7 @@ class PluginGateTests(ServiceHarness):
             "subjects": ["private", "friend"],
             "admin": False,
             "persona_teach": True,
-            "trusted_plugins": ["dsh-companion-memory"],
+            "trusted_plugins": ["dsh-rin-memory"],
         }
         payload = {
             "source_key": self.PLUGIN_KEY,
@@ -346,7 +346,7 @@ class PluginGateTests(ServiceHarness):
 
     def test_the_default_configuration_trusts_no_plugin(self):
         """An upgrade alone must not open the gate."""
-        from companion_memory.stack_config import initialize
+        from rin_memory.stack_config import initialize
 
         config_dir = Path(self.tmp.name) / "cfg"
         config = initialize(config_dir / "stack.toml")
@@ -357,7 +357,7 @@ class PluginGateTests(ServiceHarness):
 
     def test_the_identity_exposes_the_trusted_list(self):
         identity = self.management.identity("qq", "t-qq")
-        self.assertEqual(identity["trusted_plugins"], ["dsh-companion-memory"])
+        self.assertEqual(identity["trusted_plugins"], ["dsh-rin-memory"])
         self.assertTrue(identity["persona_teach"])
         untrusted = self.management.identity("qq-untrusted", "t-qq-untrusted")
         self.assertEqual(untrusted["trusted_plugins"], [])

@@ -3,11 +3,11 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from companion_memory import (
+from rin_memory import (
     ContextRequest, MemoryEngine, MemoryEvent, PersonaProfile, PersonaSection, Scene, Scope,
 )
-from companion_memory.adapters.in_memory import DemoEventContext, InMemoryStore
-from companion_memory.errors import SourceConflictError
+from rin_memory.adapters.in_memory import DemoEventContext, InMemoryStore
+from rin_memory.errors import SourceConflictError
 
 
 class ScaffoldTests(unittest.IsolatedAsyncioTestCase):
