@@ -3,18 +3,26 @@ requires = ["hatchling>=1.26,<2"]
 build-backend = "hatchling.build"
 
 [project]
-name = "companion-memory"
-version = "0.1.0.dev6"
-description = "Host-independent companion memory and persona evolution core"
+name = "rin-memory"
+version = "0.1.0.dev7"
+description = "RIN: Recall, Identity, Nurture. Editable personas, continuous growth and long-term companion memory."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 dependencies = []
 
 [project.scripts]
+rin-memory = "companion_memory.__main__:main"
+rin-memory-run = "companion_memory.cli:main"
+rin-stack = "companion_memory.stack:main"
 companion-memory = "companion_memory.__main__:main"
 companion-memory-run = "companion_memory.cli:main"
 companion-stack = "companion_memory.stack:main"
+
+[project.urls]
+Homepage = "https://github.com/lxl8182/rin-memory"
+Repository = "https://github.com/lxl8182/rin-memory"
+Issues = "https://github.com/lxl8182/rin-memory/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/companion_memory"]

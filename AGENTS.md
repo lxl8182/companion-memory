@@ -1,6 +1,8 @@
-**companion-memory 接手指南**
+**铃芽 RIN · rin-memory 接手指南**
 
-更新：2026-10-24。项目根：`F:\game\projectNEKO\companion-memory`。
+更新：2026-10-28。项目根：`F:\game\projectNEKO\companion-memory`。
+
+品牌统一为“铃芽 RIN”，核心仓库与 Python 发行包为 `rin-memory`，DSH 接入仓库与 npm 包为 `dsh-rin-memory` / `@local/dsh-rin-memory`。本机目录、Python 导入名 `companion_memory`、既有数据与协议标识保留兼容；新 CLI 为 `rin-memory`、`rin-memory-run`、`rin-stack`，旧命令仍可使用。GitHub 与 origin 使用新仓库名。
 
 **1. 用户目标与当前交付边界**
 

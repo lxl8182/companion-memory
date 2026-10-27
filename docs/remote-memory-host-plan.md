@@ -87,11 +87,11 @@ Compress-Archive -Path F:\game\projectNEKO\companion-runtime\* `
 sudo mkdir -p /srv/companion-memory && sudo chown "$USER" /srv/companion-memory
 
 # 取源码（仓库已公开）
-git clone https://github.com/lxl8182/companion-memory.git /srv/companion-memory/src
+git clone https://github.com/lxl8182/rin-memory.git /srv/companion-memory/src
 cd /srv/companion-memory/src
 uv build --wheel
 uv venv .venv --python 3.11
-uv pip install --python .venv/bin/python dist/companion_memory-0.1.0.dev4-py3-none-any.whl
+uv pip install --python .venv/bin/python dist/rin_memory-0.1.0.dev7-py3-none-any.whl
 ```
 
 > `tools/stack.ps1` 是 PowerShell 包装，**服务器上用已安装的 `companion-stack` CLI 代替**：

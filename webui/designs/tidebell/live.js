@@ -1115,7 +1115,7 @@
     const sysHint = $("#sysHint");
     if (sysHint) sysHint.textContent = engine.read_only ? "只读" : "可写";
     const about = $('[data-page="settings"] aside.panel:not(#modelCfgPanel) .card-b .reason');
-    if (about) about.textContent = "铃芽 RIN · 记忆管理台。数据留在本机，改动经引擎写入。";
+    if (about) about.textContent = "铃芽 RIN · 可编辑人设、持续养成、长期记忆的人格陪伴系统。";
     const aboutAct = $('[data-page="settings"] aside.panel:not(#modelCfgPanel) .detail-act');
     if (aboutAct) aboutAct.remove();
     const aboutFooter = $('[data-page="settings"] aside.panel:not(#modelCfgPanel) .card-f');

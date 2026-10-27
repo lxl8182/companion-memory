@@ -676,6 +676,8 @@ M6-A 收尾时发现仓库自带十一段 demo 在第 11 段 `persona_admin_demo
 
 **后续体验阶段：本轮不实施，先完成 MC07 与跨天实际使用。**
 
+**铃芽 RIN 更名（2026-10-28）**：GitHub 核心仓库与 Python 发行包改为 `rin-memory`（`0.1.0.dev7`），DSH 仓库与 npm 包改为 `dsh-rin-memory` / `@local/dsh-rin-memory`（`0.2.6`）。两份 README 按 Recall / Identity / Nurture 重写，统一铃芽标识、品牌释义与项目简介；管理台关于页和插件展示信息同步。新增 `rin-memory`、`rin-memory-run`、`rin-stack` CLI，旧命令、Python 导入名、运行根和记忆来源标识继续兼容。包安装与 stack 相关 7 项检查通过（保留 1 skipped），DSH 82 项通过；本机旧发行包已替换并核对命令入口。
+
 **服务器部署（2026-10-28）**：三个仓库已推送 origin/main，代码提交为核心 `54993c9`、DSH 插件 `3e4f2be`、QQ bridge `b455749`。服务器在 `/opt/companion-src/{companion-memory,dsh-companion-memory,dsh-qq-bridge}` 保存固定提交的 Git 工作树；核心 wheel 与 Git 中全部 Python 源文件逐一核对一致，插件从服务器工作树打包后通过 `dsh plugin --profile web add` 安装。运行版本为核心 `0.1.0.dev6`、DSH 插件 `0.2.5`、桥接 `1.0.6-neko.4`。既有 `dsh-server` 身份增加 `persona_teach=true`、`memory_outputs=true`、`trusted_plugins=['dsh_memory']`；人格卡与当前模型配置沿用服务器现状。
 
 部署验收：`companion-memory` 与 `dsh-web` 均 active/running、NRestarts=0；记忆存储/聊天/后台 ready、outbox=0；客户端 context 返回当前发布人格，主动候选接口授权访问 200、匿名访问 401；插件状态 connected、bridge subscribed、tools=0、无待补交；OneBot get_status 返回 online=true/good=true，SnowLuma 保持运行。重启后当前没有已绑定的 live QQ 主会话，收到下一条主人 QQ 消息后建立新会话并开始消费主动候选。本轮未向真实 QQ 注入模拟对话或测试消息。本机发布检查发现 M7 新测试的 discover 导入方式问题，已修正；原有 466 项组合与 M7 独立 discover 的 3 项通过，保留既有 1 skipped。

@@ -146,7 +146,7 @@ def load_config(path: Path | str) -> StackConfig:
     # exception: its version moves on every edit, and the code being run *is*
     # the configured tree, so a mismatch there is expected rather than an error.
     configured_version = runtime.get("package_version")
-    installed_version = version("companion-memory")
+    installed_version = version("rin-memory")
     if configured_version != installed_version and not _is_source_tree(python):
         raise StackConfigError(
             "runtime.package_version: install the configured build with "
@@ -252,7 +252,7 @@ def initialize(path: Path | str) -> StackConfig:
 
 [runtime]
 python = '{sys.executable}'
-package_version = '{version("companion-memory")}'
+package_version = '{version("rin-memory")}'
 
 [paths]
 memory = '../memory'

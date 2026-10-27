@@ -323,7 +323,7 @@ async def run_service(config: StackConfig, instance: str) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="New companion stack: init/start/stop/status")
+    parser = argparse.ArgumentParser(description="RIN memory stack: init/start/stop/status")
     parser.add_argument("action", choices=("init", "start", "stop", "status", "run-service"))
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--no-open", action="store_true")

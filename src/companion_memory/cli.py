@@ -761,7 +761,7 @@ def _package_check_command(_args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="companion-memory",
+        prog="rin-memory-run",
         description=(
             "Host-independent companion memory core "
             "(demo / run / migrate / rollback / package-check)"
