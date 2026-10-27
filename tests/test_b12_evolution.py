@@ -82,7 +82,15 @@ class EvolutionTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-    async def prepare(self, core, *, sections=None, fact=True):
+    async def prepare(self, core, *, sections=None, fact=True, understanding=True):
+        """Seed evidence: a raw fact plus one *mature* understanding.
+
+        M4 (design 9.3 / G15): a raw fact may explain a proposal but must never
+        qualify for one, so a pool of facts only is rejected as
+        `fact_not_eligible`. The understanding below is what a real conversation
+        would have produced through the growth gate; the fact stays in the pool
+        as explanation, which is also what G16 exercises.
+        """
         core.recover("demo")
         core.persona_card_service.import_initial("demo", sections or INITIAL)
         if fact:
@@ -90,6 +98,35 @@ class EvolutionTests(unittest.IsolatedAsyncioTestCase):
                 "id": "fact_a", "text": "用户喜欢温柔的语气", "importance": 7,
                 "schema_version": 2, "absorbed": False,
                 "source_event_keys": ["host:demo:private:a"],
+            }])
+        if understanding:
+            # Two *independent* experiences (two episodes), so the maturity gate
+            # accepts it. A single-source or basis-less "confirmed" row is
+            # deliberately not eligible (design 9.3): status alone is not proof,
+            # because the growth path and the evidence-score path confirm rows by
+            # different routes.
+            core.reflections.save("demo", [{
+                "id": "ref_understanding",
+                "text": "用户喜欢温柔、具体的语气",
+                "status": "confirmed",
+                "entity": "relationship",
+                "source_fact_ids": ["fact_a", "fact_b"],
+                "source_event_keys": [
+                    "host:demo:private:a", "host:demo:private:b",
+                ],
+                "support_basis": [
+                    {"experience": "episode:e1", "facts": ["fact_a"],
+                     "support": [{"key": "host:demo:private:a",
+                                  "fact_id": "fact_a",
+                                  "kind": "explicit_feedback",
+                                  "flags": ["user_feedback"]}]},
+                    {"experience": "episode:e2", "facts": ["fact_b"],
+                     "support": [{"key": "host:demo:private:b",
+                                  "fact_id": "fact_b",
+                                  "kind": "observed_action",
+                                  "flags": ["actual_result", "real_contact"]}]},
+                ],
+                "created_at": "2026-10-20T00:00:00+00:00",
             }])
         return 1
 
@@ -119,7 +156,12 @@ class EvolutionTests(unittest.IsolatedAsyncioTestCase):
         stored = core.evolution_service.get("demo", receipt.proposal_id)
         self.assertEqual(stored["status"], "proposed")
         self.assertEqual(stored["base_revision"], 1)
-        self.assertEqual(stored["evidence"]["source_refs"], ["fact_a"])
+        # G16: the understanding reached the proposal with its origin intact,
+        # and the raw fact is still carried as an explanation source.
+        self.assertIn("fact_a", stored["evidence"]["source_refs"])
+        self.assertIn("ref_understanding", stored["evidence"]["reflection_ids"])
+        self.assertIn("fact_a", stored["evidence"]["fact_ids"])
+        self.assertIn("fact_b", stored["evidence"]["fact_ids"])
         self.assertEqual(model.calls[0]["purpose"], "persona_evolution_proposal")
         self.assertEqual(model.calls[0]["tier"], "summary")
         # The card itself is untouched until a human accepts the proposal.

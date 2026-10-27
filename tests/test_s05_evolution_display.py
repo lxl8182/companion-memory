@@ -8,7 +8,10 @@ from pathlib import Path
 
 from companion_memory.service.management import ManagementApi
 from companion_memory.service.memory_service import MemoryService, ServiceSettings
-from tests.test_b12_evolution import FakeModel, INITIAL, PROPOSAL
+if __package__:
+    from .test_b12_evolution import FakeModel, INITIAL, PROPOSAL
+else:
+    from test_b12_evolution import FakeModel, INITIAL, PROPOSAL
 
 
 class EvolutionDisplayTests(unittest.TestCase):
@@ -20,6 +23,19 @@ class EvolutionDisplayTests(unittest.TestCase):
         self.core.persona_card_service.import_initial("demo", INITIAL)
         self.core.facts.save("demo", [{"id": "fact_a", "text": "用户喜欢具体自然的表达", "importance": 7,
             "schema_version": 2, "source_event_keys": ["host:demo:private:a"]}])
+        self.core.reflections.save("demo", [{
+            "id": "ref_display", "text": "用户认可温柔、具体的回应",
+            "status": "confirmed", "entity": "relationship",
+            "source_fact_ids": ["fact_a"],
+            "support_basis": [
+                {"experience": "episode:display-a", "facts": ["fact_a"],
+                 "support": [{"key": "host:demo:private:a", "fact_id": "fact_a",
+                              "kind": "explicit_feedback", "flags": ["user_feedback"]}]},
+                {"experience": "episode:display-b", "facts": ["fact_a"],
+                 "support": [{"key": "host:demo:private:b", "fact_id": "fact_a",
+                              "kind": "explicit_feedback", "flags": ["user_feedback"]}]},
+            ],
+        }])
         self.core.evolution_service._model = FakeModel(PROPOSAL)
         self.app = ManagementApi(self.service).console
 
@@ -30,7 +46,7 @@ class EvolutionDisplayTests(unittest.TestCase):
     def test_accepted_proposal_keeps_its_base_text_after_later_edits_and_archival(self):
         self.core.persona_card_service.revise("demo", {"base_revision": 1,
             "operations": [{"op": "replace", "section_id": "tone", "text": "原来先给建议。"}]})
-        receipt = asyncio.run(self.core.evolution_service.propose("demo", {"base_revision": 2, "source_refs": ["fact_a"]}))
+        receipt = asyncio.run(self.core.evolution_service.propose("demo", {"base_revision": 2, "source_refs": ["ref_display"]}))
         self.assertEqual(receipt.status, "proposed")
         self.core.persona_admin_service.accept_proposal("demo", receipt.proposal_id)
         self.core.persona_publish.publish("demo")

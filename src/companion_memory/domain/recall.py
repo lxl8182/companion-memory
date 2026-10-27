@@ -1517,6 +1517,39 @@ _EMPTY_CORRECTIONS = {"block": "", "items": [], "version": 0}
 _EMPTY_GROWTH = {"block": "", "items": [], "version": 0}
 _EMPTY_STATE = {"block": "", "version": 0, "updated_at": None, "items": []}
 
+#: State kinds whose items are unfinished things a follow-up can continue.
+_OPEN_THREAD_KINDS = ("progress", "concerns", "thoughts")
+#: Kinds that are explicitly "waiting on something" rather than merely open.
+_WAITING_THREAD_KINDS = frozenset({"progress", "concerns"})
+
+
+def _threads_from_state(state: Any) -> list[dict[str, Any]] | None:
+    """Open/waiting items of a state snapshot as continuation candidates.
+
+    Returns None when the snapshot has no usable item, so the caller can tell
+    "no state at all" apart from "state with nothing open".
+    """
+    if not isinstance(state, Mapping):
+        return None
+    threads: list[dict[str, Any]] = []
+    for kind in _OPEN_THREAD_KINDS:
+        for item in state.get(kind) or ():
+            if not isinstance(item, Mapping):
+                continue
+            if str(item.get("state") or "").lower() in ("done", "cancelled", "closed"):
+                continue
+            text = str(item.get("text") or item.get("label") or "").strip()
+            if not text:
+                continue
+            threads.append({
+                "text": text,
+                "thread_id": str(item.get("id") or ""),
+                "kind": kind,
+                "state": "waiting" if kind in _WAITING_THREAD_KINDS else "open",
+                "next_step": str(item.get("next_step") or ""),
+            })
+    return threads or None
+
 
 def _block_dict(block: Any) -> dict[str, Any]:
     if isinstance(block, MemoryBlock):
@@ -1576,6 +1609,8 @@ class RecallService:
         settings: RecallSettings | None = None,
         stop_names: Sequence[str] = (),
         roots: Any = None,
+        state: Any = None,
+        working_summary: Any = None,
     ) -> None:
         self._clock: Clock = clock if clock is not None else _FallbackClock()
         self._facts = facts
@@ -1590,6 +1625,11 @@ class RecallService:
             str(name).strip() for name in stop_names or () if str(name or "").strip()
         )
         self._roots = roots  # kept for composition symmetry; recall never writes
+        # M5: the real companion state and the summary projector. Both optional
+        # so a B06-only core keeps returning the same empty state it always did
+        # rather than a fabricated one.
+        self._state = state
+        self._working_summary = working_summary
 
     @property
     def settings(self) -> RecallSettings:
@@ -1849,8 +1889,223 @@ class RecallService:
         stop_names: Sequence[str] = (),
         subject: Any = None,
     ) -> dict[str, Any]:
-        """Passive turn context (host amemory_turn_context response subset)."""
+        """Passive turn context (host-shaped response subset), plus M5 layers.
+
+        M5 makes two additative changes without touching the existing keys:
+
+        * 'companion_state' is now a real StateService snapshot instead of the
+          empty placeholder. It is read **once** and both rendered as a block
+          and returned verbatim, so the version the model saw and the version
+          the caller can audit are the same read -- a commit landing between
+          the two would otherwise make the payload lie;
+        * 'working_summary' and 'episode_summary' carry the rebuildable
+          projections (growth / important facts / open threads / one episode).
+
+        The open threads a continuation question resolves against are derived
+        from that same state snapshot when the caller does not supply them:
+        before M5 the parameter existed but nobody passed it, so "那个后来怎么
+        样" had no thread to continue.
+        """
         start = self._clock.monotonic()
+        extras = self._turn_extras(character, subject=subject, scene=scene, language=language)
+        threads = open_threads if open_threads is not None else extras["threads"]
+        followup = self._resolve_followup(
+            character, current_input, subject=subject, scene=scene,
+            language=language,
+        )
+        result = await self._turn_context_core(
+            character,
+            current_input=current_input,
+            recent_turns=recent_turns,
+            open_threads=threads,
+            scene=scene,
+            purpose=purpose,
+            language=language,
+            budget_ms=budget_ms,
+            max_context_tokens=max_context_tokens,
+            request_id=request_id,
+            stop_names=stop_names,
+            subject=subject,
+            start=start,
+            followup_thread=(
+                str(followup["thread"].get("text") or "")
+                if followup.get("status") == "resolved" and followup.get("thread")
+                else ""
+            ),
+            # A brand new topic must never inherit the open thread's episode:
+            # the fallback only applies once the resolver decided the message
+            # *is* a continuation (design section 10.4 -- "an explicit new topic
+            # stops inheriting the old one").
+            followup_episode=(
+                str(followup["thread"].get("episode_id") or "")
+                if followup.get("status") == "resolved" and followup.get("thread")
+                else (
+                    extras["thread_episode"]
+                    if followup.get("status") != "not_continuation"
+                    else ""
+                )
+            ),
+        )
+        result["companion_state"] = extras["state"]
+        result["companion_state_version"] = extras["state_version"]
+        result["working_summary"] = extras["summary"]
+        result["threads_source"] = (
+            "caller" if open_threads is not None else "companion_state"
+        )
+        result["episode_summary"] = extras["episode"]
+        result["followup"] = followup
+        return result
+
+    def _resolve_followup(
+        self,
+        character: Any,
+        query: Any,
+        *,
+        subject: Any,
+        scene: Any,
+        language: str,
+    ) -> dict[str, Any]:
+        """Which open thread a continuation question is about (M5 / G18).
+
+        "后来怎么样" has to continue the most recent open thread; when two items
+        are equally plausible the answer is *which ones*, so the caller can ask
+        a natural clarifying question instead of guessing (design section 10.4).
+        Only a continuation question is resolved: an ordinary new topic must not
+        be dragged back to an old item.
+        """
+        empty = {"status": "not_continuation", "thread": None,
+                 "candidates": [], "clarify_basis": []}
+        if self._working_summary is None:
+            return empty
+        text = str(query or "")
+        if not text.strip():
+            return empty
+        if not (has_anaphora(text) or continuation_markers(text)):
+            return empty
+        try:
+            return self._working_summary.resolve_followup(
+                character, text, subject=subject, scene=scene, language=language,
+            )
+        except Exception:  # noqa: BLE001 - resolution is an optional layer
+            return {"status": "miss", "thread": None, "candidates": [],
+                    "clarify_basis": []}
+
+    def _turn_extras(
+        self,
+        character: Any,
+        *,
+        subject: Any,
+        scene: Any,
+        language: str,
+    ) -> dict[str, Any]:
+        """Read the state snapshot and the summary projections once (never raises)."""
+        extras: dict[str, Any] = {
+            "state": dict(_EMPTY_STATE),
+            "state_version": 0,
+            "summary": None,
+            "episode": None,
+            "threads": None,
+            "thread_episode": "",
+        }
+        name = str(character or "").strip()
+        if not name:
+            return extras
+        subject_key = str(subject or "private").strip() or "private"
+        snapshot = None
+        if self._state is not None:
+            try:
+                snapshot = self._state.read(name, subject=subject_key)
+            except Exception:  # noqa: BLE001 - state is an optional layer
+                snapshot = None
+        if snapshot is not None:
+            extras["state"] = self._state_payload(snapshot)
+            extras["state_version"] = int(getattr(snapshot, "version", 0) or 0)
+            extras["threads"] = _threads_from_state(getattr(snapshot, "state", None))
+        if self._working_summary is not None:
+            try:
+                summary = self._working_summary.build(
+                    name, subject=subject_key, scene=scene, language=language,
+                )
+            except Exception:  # noqa: BLE001 - a summary never fails a turn
+                summary = None
+            if summary is not None:
+                extras["summary"] = summary.to_dict()
+                extras["episode"] = (
+                    dict(summary.episode) if summary.episode else None
+                )
+                if extras["threads"] is None:
+                    items = summary.section("open_threads").items
+                    extras["threads"] = [
+                        {
+                            "text": str(item.get("text") or ""),
+                            "thread_id": item.get("thread_id"),
+                            "next_step": item.get("next_step"),
+                        }
+                        for item in items
+                        if str(item.get("text") or "").strip()
+                    ] or None
+                extras["thread_episode"] = self._thread_episode(
+                    summary, extras["threads"],
+                )
+        return extras
+
+    @staticmethod
+    def _thread_episode(
+        summary: Any, threads: Any,
+    ) -> str:
+        """The episode id the continuation target belongs to ("" when unknown)."""
+        if not threads:
+            return ""
+        lead = str((threads[0] or {}).get("text") or "").strip()
+        for item in summary.section("open_threads").items:
+            if str(item.get("text") or "").strip() == lead:
+                return str(item.get("episode_id") or "")
+        return ""
+
+    @staticmethod
+    def _state_payload(snapshot: Any) -> dict[str, Any]:
+        """The companion_state block in its frozen wire shape."""
+        payload = {
+            "block": str(getattr(snapshot, "block", "") or ""),
+            "version": int(getattr(snapshot, "version", 0) or 0),
+            "updated_at": getattr(snapshot, "updated_at", None),
+            "items": [
+                dict(item) for item in (getattr(snapshot, "items", ()) or ())
+                if isinstance(item, Mapping)
+            ],
+        }
+        state = getattr(snapshot, "state", None)
+        if isinstance(state, Mapping):
+            payload["state"] = {
+                str(kind): [dict(item) for item in rows if isinstance(item, Mapping)]
+                for kind, rows in state.items()
+            }
+        lease = getattr(snapshot, "lease", None)
+        payload["lease"] = dict(lease) if isinstance(lease, Mapping) else None
+        return payload
+
+    async def _turn_context_core(
+        self,
+        character: Any,
+        *,
+        current_input: Any = "",
+        recent_turns: Any = None,
+        open_threads: Any = None,
+        scene: Any = None,
+        purpose: str = "chat",
+        language: str = "zh",
+        budget_ms: int | None = None,
+        max_context_tokens: int | None = None,
+        request_id: str | None = None,
+        stop_names: Sequence[str] = (),
+        subject: Any = None,
+        start: float | None = None,
+        followup_thread: str = "",
+        followup_episode: str = "",
+    ) -> dict[str, Any]:
+        """The B06 passive-context body; M5 layers are attached by the caller."""
+        if start is None:
+            start = self._clock.monotonic()
         try:
             name = self._character(character)
             if self._facts is None or self._reflections is None:
@@ -1864,15 +2119,31 @@ class RecallService:
             deadline = self._deadline(start, budget_ms)
             snapshot = self._barrier_snapshot(name)
             versions = self._barrier_versions(name)
+            # M5: when the caller passed no threads but the follow-up resolver
+            # identified the open item a continuation question is about, that
+            # item's text is what lets the query reach the right memories.
+            threads_for_query = open_threads
+            if not threads_for_query and followup_thread:
+                threads_for_query = [{"text": followup_thread}]
             query, query_meta = build_recall_query(
                 current_input,
                 recent_turns=recent_turns,
-                open_threads=open_threads,
+                open_threads=threads_for_query,
                 max_chars=settings.query_max_chars,
                 short_message_chars=settings.short_message_chars,
                 recent_turns_max=settings.recent_turns_max,
                 stop_names=names,
             )
+            # M5: a resolved follow-up is the strongest signal there is about
+            # what "that" means. The thread's own text is appended to the query
+            # even when the word-overlap heuristic declined it, otherwise
+            # "那个后来怎么样" stays a miss and the continuation retrieves
+            # nothing -- which is exactly the pre-M5 behaviour this fixes.
+            if followup_thread and not query_meta.get("used_thread"):
+                merged = f"{query} {followup_thread}".strip()
+                query = merged[: settings.query_max_chars]
+                query_meta = dict(query_meta, used_thread=True,
+                                  thread_from_followup=True)
             if not query:
                 return self._turn_result(
                     "miss", start, query_meta=query_meta,
@@ -1906,6 +2177,19 @@ class RecallService:
             picked, mode = self._passive_pick(
                 query, bm25_scored, cosine_scored, names, purpose,
             )
+            if not picked and followup_episode:
+                # M5: a resolved continuation ("后来怎么样") continues the
+                # episode of the thread it resolved to. Counting words alone
+                # would miss it -- the current message is pure anaphora, so its
+                # only useful term is "面试" buried in a stop-word cloud. The
+                # episode membership *is* the anchor, and it is derived, so a
+                # deleted episode simply stops being selected.
+                picked = [
+                    row for row in bm25_pool
+                    if episode_id_of(row) == followup_episode
+                ][: settings.passive_max_items]
+                if picked:
+                    mode = "episode"
             if not picked:
                 return self._turn_result(
                     "miss", start, query_meta=query_meta, mode=mode,
@@ -2618,6 +2902,13 @@ class RecallService:
             "deletion_version": int(version_map.get("deletion_version", 0)),
             "episode": dict(episode) if episode else {},
             "companion_state": dict(_EMPTY_STATE),
+            # M5 additive layers; build_turn_context overwrites these with the
+            # real snapshot and projections, so every early-return path still
+            # carries the documented empty shapes rather than omitting the keys.
+            "companion_state_version": 0,
+            "working_summary": None,
+            "episode_summary": None,
+            "threads_source": "none",
         }
 
     def _unavailable(self, start: float, reason: str) -> dict[str, Any]:

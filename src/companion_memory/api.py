@@ -1,7 +1,7 @@
 """Composition facade; no host imports, globals, model calls or background tasks."""
 
 import asyncio
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from .contracts import (
     ContextBundle,
@@ -34,8 +34,10 @@ if TYPE_CHECKING:  # runtime stays light; the services are injected, not importe
     from .domain.persona_projection import PersonaProjectionService
     from .domain.persona_publish import PersonaPublishService, PublishRequest
     from .domain.evolution_scheduler import EvolutionScheduler
+    from .domain.outputs import OutputReceipt, OutputService
     from .domain.recall import RecallService
     from .domain.state import StateCommitRequest, StateReadRequest, StateService
+    from .domain.working_summary import WorkingSummary, WorkingSummaryService
     from .domain.reflection import (
         GrowthReceipt,
         PromotionOutcome,
@@ -73,6 +75,8 @@ class MemoryEngine:
         persona_admin: "PersonaAdminService | None" = None,
         persona_projection: "PersonaProjectionService | None" = None,
         evolution_scheduler: "EvolutionScheduler | None" = None,
+        outputs: "OutputService | None" = None,
+        working_summary: "WorkingSummaryService | None" = None,
     ) -> None:
         self._events = events
         self._profiles = profiles
@@ -90,6 +94,9 @@ class MemoryEngine:
         self._persona_admin = persona_admin
         self._persona_projection = persona_projection
         self._evolution_scheduler = evolution_scheduler
+        #: M5: assistant-output records and the rebuildable working summaries.
+        self._outputs = outputs
+        self._working_summary = working_summary
 
     # -- B00/B02 operations ---------------------------------------------
 
@@ -407,6 +414,100 @@ class MemoryEngine:
             "current": receipt.current,
             "event_id": receipt.event_id,
         }
+
+    # -- M5 operations ---------------------------------------------------
+
+    def record_output(
+        self,
+        character: str,
+        *,
+        text: str,
+        kind: str = "notice",
+        subject: str = "private",
+        scene: str = "",
+        session_id: str = "",
+        client_id: str = "",
+        episode_id: str | None = None,
+        source_key: str | None = None,
+        cause: Mapping[str, Any] | None = None,
+        request_id: str | None = None,
+        part_sizes: object = None,
+    ) -> dict:
+        """Persist a generated assistant body without declaring it delivered."""
+        receipt = self._require_outputs().create(
+            character, text=text, kind=kind, subject=subject, scene=scene,
+            session_id=session_id, client_id=client_id, episode_id=episode_id,
+            source_key=source_key, cause=cause, request_id=request_id,
+            part_sizes=part_sizes,  # type: ignore[arg-type]
+        )
+        return receipt.to_dict(include_text=True)
+
+    def deliver_output(
+        self,
+        character: str,
+        output_id: str,
+        *,
+        parts: object = None,
+        platform_id: str = "",
+        kind: str = "sent",
+        reason: str | None = None,
+    ) -> dict:
+        """Record which parts actually arrived; only those enter recent."""
+        receipt = self._require_outputs().deliver(
+            character, output_id, parts=parts,  # type: ignore[arg-type]
+            platform_id=platform_id, kind=kind, reason=reason,
+        )
+        return receipt.to_dict(include_text=True)
+
+    def output(self, character: str, output_id: str, *, include_text: bool = True) -> dict:
+        payload = self._require_outputs().get(
+            character, output_id, include_text=include_text,
+        )
+        if payload is None:
+            raise NotConfiguredError(f"unknown output {output_id!r}")
+        return payload
+
+    def pending_outputs(self, character: str, *, limit: int = 20) -> dict:
+        """What a restart still has to deliver (resume after a crash)."""
+        return {
+            "items": self._require_outputs().pending(character, limit=limit),
+        }
+
+    def invalidate_output(
+        self, character: str, output_id: str, *, reason: str = "source_deleted",
+    ) -> dict:
+        receipt = self._require_outputs().invalidate(
+            character, output_id, reason=reason,
+        )
+        return receipt.to_dict(include_text=False)
+
+    def working_summary(
+        self,
+        character: str,
+        *,
+        subject: str = "private",
+        scene: object = None,
+        language: str = "zh",
+    ) -> dict:
+        """The three rebuildable summaries plus the episode view (read-only)."""
+        summary = self._require_working_summary().build(
+            character, subject=subject, scene=scene, language=language,
+        )
+        return summary.to_dict()
+
+    def resolve_followup(
+        self,
+        character: str,
+        query: str,
+        *,
+        subject: str = "private",
+        scene: object = None,
+        language: str = "zh",
+    ) -> dict:
+        """Which open thread a continuation question is about (+ clarify basis)."""
+        return self._require_working_summary().resolve_followup(
+            character, query, subject=subject, scene=scene, language=language,
+        )
 
     async def maintain(self, character: str) -> dict:
         """Run one maintenance round (reconcile -> outbox -> derive -> retry)."""
@@ -778,6 +879,22 @@ class MemoryEngine:
                 "build_memory_core (B10) instead of calling card methods",
             )
         return self._persona_card
+
+    def _require_outputs(self) -> "OutputService":
+        if self._outputs is None:
+            raise NotConfiguredError(
+                "this MemoryEngine has no output service; wire it with "
+                "build_memory_core (M5) instead of calling output methods",
+            )
+        return self._outputs
+
+    def _require_working_summary(self) -> "WorkingSummaryService":
+        if self._working_summary is None:
+            raise NotConfiguredError(
+                "this MemoryEngine has no working-summary projector; wire it "
+                "with build_memory_core (M5)",
+            )
+        return self._working_summary
 
     def _require_state(self) -> "StateService":
         if self._state is None:

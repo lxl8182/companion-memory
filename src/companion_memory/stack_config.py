@@ -188,6 +188,20 @@ def load_config(path: Path | str) -> StackConfig:
             raise StackConfigError(f"clients.{client}.host_persona: expected a boolean")
         if not isinstance(spec.get("memory_tools", False), bool):
             raise StackConfigError(f"clients.{client}.memory_tools: expected a boolean")
+        if not isinstance(spec.get("persona_teach", False), bool):
+            raise StackConfigError(f"clients.{client}.persona_teach: expected a boolean")
+        if not isinstance(spec.get("memory_outputs", False), bool):
+            raise StackConfigError(f"clients.{client}.memory_outputs: expected a boolean")
+        # M6-A: the plugin ids this client may cite as a saved-message source when
+        # it submits an explicit teaching. Empty (the default) trusts no plugin,
+        # so an upgrade alone never widens the QQ path.
+        trusted = spec.get("trusted_plugins", [])
+        if not isinstance(trusted, list) or any(
+            not isinstance(item, str) or not item.strip() for item in trusted
+        ):
+            raise StackConfigError(
+                f"clients.{client}.trusted_plugins: expected a list of plugin ids",
+            )
     settings = ServiceSettings(
         memory_root=roots["memory"], local_state_root=roots["state"] / "memory-service",
         character=character_id, host=host, port=port,
@@ -300,6 +314,22 @@ host_persona = false
 # the conversation. Independent of host_persona and limited to the subjects
 # above; off by default.
 memory_tools = false
+# A chat client may submit an explicit teaching ("以后别每次都总结") that points
+# at one of its own saved messages, and take one back. It cannot post rule
+# text or edit any other section. Independent of the two grants above; off by
+# default.
+persona_teach = false
+# A chat client may record assistant output (a proactive message or a task
+# result) and report which parts the platform actually delivered. Only the
+# delivered parts become shared conversation, so this grant cannot fabricate an
+# experience; it can only state what really arrived. Off by default.
+memory_outputs = false
+# Plugin ids whose saved messages this client may cite when it submits an
+# explicit teaching. Only consulted together with persona_teach: a plugin id
+# never grants the capability, and it never widens the subject or character
+# scope. Empty means "trust no plugin", which keeps the previous behaviour
+# (plugin sources refused) until a specific plugin is granted on purpose.
+trusted_plugins = []
 
 [models.host]
 base_url = ''

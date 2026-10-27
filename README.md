@@ -2,7 +2,7 @@
 
 面向不同宿主的记忆与人格演化核心。N.E.K.O 是首个接入方，继续负责对话、语音、情绪分析、Live2D、表情、动作与插件调度；本仓库只做记忆、人格与演化，不实现宿主表现层。
 
-- 当前版本 `0.1.0.dev4`，Python 3.11+，核心运行依赖为零。
+- 当前版本 `0.1.0.dev6`，Python 3.11+，核心运行依赖为零。
 - 模型、嵌入、分词、数据根与写入许可由端口注入，核心不导入宿主的任何模块或插件 SDK。
 - 许可证：Apache-2.0。
 
@@ -11,7 +11,9 @@
 - 独立记忆流程：原文记录、事实抽取、反思与成长、相关召回、经历关联、状态、后台维护及重启恢复。
 - 数据控制：来源与请求幂等、主体/场景隔离、更正、删除屏障、派生内容撤回及防复活。
 - 人格核心：当前卡、局部修订、冻结、历史、版本发布、消费回执、修订提案与审核。
+- 陪伴连续性：单轮明确教导与撤销、按主题维护反思、独立经历与真实证据资格、助手输出回执、可重建工作摘要、真实状态及主动候选队列。自动演化需要独立经历与交互依据，明确教导使用独立快速路径。
 - 交付工具：独立运行 CLI、包检查、格式检测、迁移、备份和保留新增数据的回滚。
+- 对话事项与主动交流：同一次后台提炼同时更新事实和事项，支持进展、结案与有原话来源的回访时间；受限 `/v1/proactive/*` 接口供宿主领取、生成、发送前复查与恢复。DSH 主会话保持人格与魔法段、请求不带 `tools`，QQ 分段回执决定哪些文字进入近期记忆。
 - 新 stack 已完成非宿主闭环：TOML 配置、同源水彩管理台、真实模型对话、记忆提炼/召回/更正/删除、人格发布/演化、消费回执和重启恢复。已接通 N.E.K.O 的文字对话、已发布人格、记忆回写和有界持久补交；语音/主动/实时/游戏接线继续按 S05 推进。模板默认 `host.enabled=false`，配置宿主后启用。
 - 数据策略：本轮为测试开发，现有运行根与 `nekodata` 可直接读写、清空、重来，测试数据无需保留；人格卡不重建，只能经服务的编辑/发布/回滚/演化修改。
 
@@ -26,7 +28,7 @@
 ```powershell
 uv sync                     # 兼容旧文档；本仓库无第三方运行依赖
 uv build --wheel
-uv pip install --python .venv/Scripts/python.exe --reinstall dist/companion_memory-0.1.0.dev4-py3-none-any.whl
+uv pip install --python .venv/Scripts/python.exe --reinstall dist/companion_memory-0.1.0.dev6-py3-none-any.whl
 ```
 
 仅首次没有 `.venv` 时先执行 `uv venv .venv --python 3.11`。也可以直接 `uv run` 使用源码树，跳过安装步骤。
@@ -87,6 +89,7 @@ uv run python -m unittest discover -s tests -v     # 测试套件
 | [docs/webui-console.md](docs/webui-console.md) | 管理台启动、接口与故障处理 |
 | [docs/companion-continuity-plan.md](docs/companion-continuity-plan.md) | 记忆与陪伴连续性改造方案 |
 | [docs/server-qq-dsh-plan.md](docs/server-qq-dsh-plan.md) | Windows 本机优先的 QQ bridge → DSH 陪伴角色、记忆接入与后续服务器部署计划（Q01—Q06） |
+| [docs/remote-memory-host-plan.md](docs/remote-memory-host-plan.md) | 远程记忆宿主方案（A：SSH 隧道 + 服务常驻服务器）；**已确认、暂缓执行** |
 | [docs/closeout.md](docs/closeout.md) | 收尾任务、管理台合同、界面风格建议与交接方法 |
 | [LICENSE](LICENSE) | Apache-2.0 全文 |
 

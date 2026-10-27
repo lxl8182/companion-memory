@@ -340,6 +340,11 @@ def _normalize_item(raw: Any) -> dict[str, Any] | None:
         value = _bounded_text(raw.get(key), MAX_TEXT_CHARS)
         if value:
             item[key] = value
+    for key in ("followup_at", "event_at"):
+        if raw.get(key):
+            item[key] = _normalize_expires_at(raw[key])
+    if "agreed_followup" in raw:
+        item["agreed_followup"] = bool(raw["agreed_followup"])
     return item
 
 
@@ -495,6 +500,11 @@ def normalize_op(op: Any, *, internal: bool) -> dict[str, Any]:
             )
         return normalized
     normalized["text"] = _require_non_empty(op.get("text"), "text", MAX_TEXT_CHARS)
+    for key in ("followup_at", "event_at"):
+        if key in op:
+            normalized[key] = _normalize_expires_at(op[key])
+    if "agreed_followup" in op:
+        normalized["agreed_followup"] = bool(op["agreed_followup"])
     if op_type == "set_concern":
         for key in ("why", "next_step"):
             value = _bounded_text(op.get(key), MAX_TEXT_CHARS)
@@ -715,12 +725,12 @@ def apply_ops(state: dict[str, Any], ops: Sequence[Mapping[str, Any]], now: date
         elif op_type == "set_concern":
             changed = _set_item(
                 state.setdefault("concerns", []), op, now,
-                extra_fields=("why", "next_step"),
+                extra_fields=("why", "next_step", "followup_at", "event_at", "agreed_followup"),
             )
         elif op_type == "set_progress":
             changed = _set_item(
                 state.setdefault("progress", []), op, now,
-                extra_fields=("next_step",),
+                extra_fields=("next_step", "followup_at", "event_at", "agreed_followup"),
             )
         elif op_type == "set_mood":
             changed = _set_mood(state.setdefault("moods", []), op, now)
@@ -840,6 +850,9 @@ def _public_item(kind: str, item: Mapping[str, Any], now: datetime) -> dict[str,
         for key in ("why", "next_step"):
             if item.get(key):
                 public[key] = str(item[key])
+    for key in ("followup_at", "event_at", "agreed_followup"):
+        if key in item:
+            public[key] = item[key]
     return public
 
 

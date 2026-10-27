@@ -72,6 +72,14 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def prepare(self, core):
+        """Seed one raw fact (explanation) and one mature understanding.
+
+        M4 (design 9.3): a pool of raw facts is rejected as
+        `fact_not_eligible`, so the proposal has to rest on evidence that passed
+        the maturity gate - two independent experiences here. The fact stays in
+        the pool as the explanation source and is still available to the admin
+        layer's source checks.
+        """
         core.recover("demo")
         core.persona_card_service.import_initial("demo", INITIAL)
         core.facts.save("demo", [{
@@ -79,8 +87,28 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
             "schema_version": 2, "absorbed": False,
             "source_event_keys": ["host:demo:private:a"],
         }])
+        core.reflections.save("demo", [{
+            "id": "ref_understanding",
+            "text": "用户喜欢温柔、具体的语气",
+            "status": "confirmed",
+            "entity": "relationship",
+            "source_fact_ids": ["fact_a"],
+            "support_basis": [
+                {"experience": "episode:e1", "facts": ["fact_a"],
+                 "support": [{"key": "host:demo:private:a",
+                              "fact_id": "fact_a",
+                              "kind": "explicit_feedback",
+                              "flags": ["user_feedback"]}]},
+                {"experience": "episode:e2", "facts": ["fact_b"],
+                 "support": [{"key": "host:demo:private:b",
+                              "fact_id": "fact_b",
+                              "kind": "observed_action",
+                              "flags": ["actual_result", "real_contact"]}]},
+            ],
+            "created_at": "2026-10-20T00:00:00+00:00",
+        }])
         return await core.evolution_service.propose("demo", {
-            "base_revision": 1, "source_refs": ["fact_a"],
+            "base_revision": 1, "source_refs": ["ref_understanding"],
         })
 
     async def test_accept_proposal_revises_card_and_records_decision(self):

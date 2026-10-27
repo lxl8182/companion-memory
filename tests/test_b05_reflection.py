@@ -22,7 +22,10 @@ from companion_memory.contracts import (
     DeletionTarget,
     Scope,
 )
-from companion_memory.domain.reflection import ReflectionSettings, reflection_id_from_facts
+from companion_memory.domain.reflection import (
+    ReflectionSettings,
+    reflection_id_from_topic,
+)
 
 
 class MutableClock:
@@ -65,7 +68,12 @@ class FakeModel:
                 raise RuntimeError("provider down")
             if self._synthesis is not None:
                 return self._synthesis
-            payload = {"reflection": "主人喜欢被直接问", "entity": "relationship"}
+            payload = {
+                "operation": "add",
+                "reflection": "主人喜欢被直接问",
+                "topic": "沟通方式",
+                "entity": "relationship",
+            }
             if self._growth:
                 payload.update({
                     "memory_kind": "habit",
@@ -76,8 +84,8 @@ class FakeModel:
         return "{}"
 
 
-def facts(count=5, *, importance=7, prefix="fact"):
-    return [
+def facts(count=5, *, importance=7, prefix="fact", evidence_kind=None):
+    rows = [
         {
             "id": f"{prefix}_{index}",
             "text": f"用户喜欢第{index}件事",
@@ -90,6 +98,14 @@ def facts(count=5, *, importance=7, prefix="fact"):
         }
         for index in range(count)
     ]
+    if evidence_kind is not None:
+        for row in rows:
+            row["evidence_kind"] = evidence_kind
+    return rows
+
+
+def rows_id_of(outcome):
+    return outcome.reflection_ids[0] if outcome.reflection_ids else ""
 
 
 class ReflectionFlowTests(unittest.IsolatedAsyncioTestCase):
@@ -120,8 +136,12 @@ class ReflectionFlowTests(unittest.IsolatedAsyncioTestCase):
         core.facts.save("demo", facts(5))
         first = await core.reflection_service.synthesize("demo")
         self.assertEqual(first.status, "completed")
-        expected = reflection_id_from_facts([f"fact_{index}" for index in range(5)])
+        # The id is content-addressed since the reflection-layer rework
+        # (topic + scope + text hash); it used to be a hash of the batch's fact
+        # ids, which made every new batch a new row.
+        expected = reflection_id_from_topic("沟通方式", {}, "主人喜欢被直接问")
         self.assertEqual(first.reflection_ids, (expected,))
+        self.assertEqual(rows_id_of(first), expected)
         self.assertEqual(len(self.model.calls), 1)
         call = self.model.calls[0]
         self.assertEqual(call["purpose"], "reflection_synthesis")
@@ -269,7 +289,10 @@ class ReflectionFlowTests(unittest.IsolatedAsyncioTestCase):
         model = FakeModel(growth=True)
         core = self.build(model=model)
         core.recover("demo")
-        core.facts.save("demo", facts())
+        # M4: a growth candidate needs real evidence. Bare user statements
+        # (evidence_kind=user_assertion) no longer open the habit gate, so this
+        # fixture records what actually happened in the conversation.
+        core.facts.save("demo", facts(evidence_kind="observed_action"))
         synth = await core.reflection_service.synthesize("demo")
         self.assertEqual(len(synth.growth_item_ids), 1)
         item_id = synth.growth_item_ids[0]

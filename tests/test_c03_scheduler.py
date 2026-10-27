@@ -91,7 +91,14 @@ class SchedulerIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
         return core, model
 
-    def prepare(self, core, *, facts=None):
+    def prepare(self, core, *, facts=None, understanding=True):
+        """Seed a fact (explanation) and a mature understanding (qualifier).
+
+        M4: automatic evolution only runs on evidence that passed the maturity
+        gate; a fact alone is `fact_not_eligible`. The understanding is what the
+        reflection/growth path produces from a real conversation, and the fact
+        stays in the pool as the explanation source.
+        """
         core.recover("demo")
         core.persona_card_service.import_initial("demo", INITIAL)
         rows = facts if facts is not None else [{
@@ -100,6 +107,32 @@ class SchedulerIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "source_event_keys": ["host:demo:private:a"],
         }]
         core.facts.save("demo", rows)
+        if understanding:
+            # Two independent experiences, so the maturity gate accepts it (a
+            # confirmed row with one source or no basis is not eligible).
+            core.reflections.save("demo", [{
+                "id": "ref_understanding",
+                "text": "用户喜欢温柔、具体的语气",
+                "status": "confirmed",
+                "entity": "relationship",
+                "source_fact_ids": ["fact_a", "fact_b"],
+                "source_event_keys": [
+                    "host:demo:private:a", "host:demo:private:b",
+                ],
+                "support_basis": [
+                    {"experience": "episode:e1", "facts": ["fact_a"],
+                     "support": [{"key": "host:demo:private:a",
+                                  "fact_id": "fact_a",
+                                  "kind": "explicit_feedback",
+                                  "flags": ["user_feedback"]}]},
+                    {"experience": "episode:e2", "facts": ["fact_b"],
+                     "support": [{"key": "host:demo:private:b",
+                                  "fact_id": "fact_b",
+                                  "kind": "observed_action",
+                                  "flags": ["actual_result", "real_contact"]}]},
+                ],
+                "created_at": "2026-10-20T00:00:00+00:00",
+            }])
         return core
 
     def engine(self, core):

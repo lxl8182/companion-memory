@@ -253,11 +253,15 @@ class _DemoReflectionModel:
         self.calls += 1
         if self.calls == 1:
             return json.dumps({
+                "operation": "add",
                 "reflection": "主人更喜欢被直接问，而不是被反复试探",
+                "topic": "沟通方式",
                 "entity": "relationship",
             }, ensure_ascii=False)
         return json.dumps({
+            "operation": "add",
             "reflection": "用户周末早晨有晨跑习惯",
+            "topic": "运动",
             "entity": "relationship",
             "memory_kind": "habit",
             "claim": "用户周末早晨会晨跑",
@@ -786,6 +790,37 @@ class _EvolutionModel:
             '"reason":"证据显示用户偏好具体的温柔表达"}'
         )
 
+def _demo_understanding(fact_id: str) -> dict:
+    """A matured understanding for the demo trajectories.
+
+    M4 (design 9.3 / G15): a raw fact explains a proposal but can never qualify
+    for one (`fact_not_eligible`). A real conversation reaches this row through
+    the growth gate, so the demo seeds it directly -- two independent
+    experiences, status `confirmed`, with the fact kept as provenance.
+    """
+    return {
+        "id": "ref_tone",
+        "text": "用户在沟通上偏好温柔、具体的语气",
+        "status": "confirmed",
+        "entity": "relationship",
+        "source_fact_ids": [fact_id],
+        "source_event_keys": ["host:demo:private:tone", "host:demo:private:tone2"],
+        "support_event_keys": ["host:demo:private:tone", "host:demo:private:tone2"],
+        "support_basis": [
+            {"experience": "episode:demo-tone-1", "facts": [fact_id],
+             "support": [{"key": "host:demo:private:tone", "fact_id": fact_id,
+                         "kind": "explicit_feedback",
+                         "flags": ["user_feedback"]}]},
+            {"experience": "episode:demo-tone-2", "facts": [fact_id],
+             "support": [{"key": "host:demo:private:tone2", "fact_id": fact_id,
+                         "kind": "explicit_feedback",
+                         "flags": ["user_feedback"]}]},
+        ],
+        "support_count": 2,
+        "created_at": "2026-10-20T00:00:00+00:00",
+        "updated_at": "2026-10-20T00:00:00+00:00",
+    }
+
 
 async def persona_evolution_demo() -> dict:
     """Prove the B12 proposal loop: the model proposes, validation decides.
@@ -814,21 +849,23 @@ async def persona_evolution_demo() -> dict:
             "schema_version": 2, "absorbed": False,
             "source_event_keys": ["host:demo:private:tone"],
         }])
+        core.reflections.save("demo", [_demo_understanding("fact_tone")])
+        refs = ["ref_tone", "fact_tone"]
         proposed = await core.evolution_service.propose("demo", {
-            "base_revision": 1, "source_refs": ["fact_tone"],
+            "base_revision": 1, "source_refs": refs,
             "reason": "demo proposal",
         })
         duplicate = await core.evolution_service.propose("demo", {
-            "base_revision": 1, "source_refs": ["fact_tone"],
+            "base_revision": 1, "source_refs": refs,
             "reason": "demo proposal", "request_id": "demo-request",
         })
         again = await core.evolution_service.propose("demo", {
-            "base_revision": 1, "source_refs": ["fact_tone"],
+            "base_revision": 1, "source_refs": refs,
             "reason": "demo proposal", "request_id": "demo-request",
         })
         frozen = core.persona_card_service.freeze("demo", "tone", True)
         blocked = await core.evolution_service.propose("demo", {
-            "base_revision": frozen.revision, "source_refs": ["fact_tone"],
+            "base_revision": frozen.revision, "source_refs": refs,
         })
         return {
             "mode": "persona_evolution_temp_root",
@@ -882,8 +919,15 @@ async def persona_admin_demo() -> dict:
             "schema_version": 2, "absorbed": False,
             "source_event_keys": ["host:demo:private:tone"],
         }])
+        # M4 (design 9.3 / G15): a raw fact explains a proposal but may never
+        # qualify for one, so this demo has to carry the understanding a real
+        # conversation would have produced through the growth gate. The fact
+        # stays in the pool as the explanation source.
+        core.reflections.save("demo", [
+            _demo_understanding("fact_tone"),
+        ])
         proposal = await core.evolution_service.propose("demo", {
-            "base_revision": 1, "source_refs": ["fact_tone"],
+            "base_revision": 1, "source_refs": ["ref_tone", "fact_tone"],
         })
         accepted = core.persona_admin_service.accept_proposal(
             "demo", proposal.proposal_id, reason="demo accept",
@@ -893,7 +937,7 @@ async def persona_admin_demo() -> dict:
         )
         second = await core.evolution_service.propose("demo", {
             "base_revision": accepted.revision_after,
-            "source_refs": ["fact_tone"],
+            "source_refs": ["ref_tone", "fact_tone"],
         })
         rejected = core.persona_admin_service.reject_proposal(
             "demo", second.proposal_id, reason="demo reject",

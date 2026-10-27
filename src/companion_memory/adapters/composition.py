@@ -27,18 +27,27 @@ from ..domain.deletions import DeletionService, DeletionServices
 from ..domain.extraction import ExtractionService, ExtractionSettings
 from ..domain.maintenance import MaintenanceService, MaintenanceSettings
 from ..domain.outbox_dispatch import OutboxDispatcher
+from ..domain.outputs import EVT_OUTPUT_RECORDED, OutputService  # noqa: F401 - event type
+from ..domain.conversation_state import ConversationState
 from ..domain.persona import PersonaService
 from ..domain.evolution import EvolutionService, EvolutionSettings
+from ..domain.growth_evidence import MEMORY_KINDS, evidence_dto
 from ..domain.evolution_scheduler import EvolutionScheduler, SchedulerSettings
 from ..domain.persona_admin import PersonaAdminService
 from ..domain.persona_card import PersonaCardService
 from ..domain.persona_projection import PersonaProjectionService
 from ..domain.persona_publish import PersonaPublishService
+from ..domain.proactive import EVT_PROACTIVE_CANDIDATE, ProactiveService, ProactiveSettings  # noqa: F401 - event type
 from ..domain.recall import RecallService, RecallSettings
 from ..domain.recent import RecentDeletionCleaner
 from ..domain.turn_results import CorrectionTurnInvalidator, TurnResultCleaner
-from ..domain.reflection import ReflectionService, ReflectionSettings
+from ..domain.reflection import (
+    PROMOTION_RULES,
+    ReflectionService,
+    ReflectionSettings,
+)
 from ..domain.state import StateService
+from ..domain.working_summary import WorkingSummaryService
 from ..persistence.atomic import FileSystemAtomicStore
 from ..persistence.clock import SystemClock
 from ..persistence.consumer_refs import ConsumerRefStore
@@ -49,6 +58,7 @@ from ..persistence.facts_view import FactsView
 from ..persistence.gates import SuppressionGate
 from ..persistence.journal import EventJournal
 from ..persistence.outbox import OutboxStore
+from ..persistence.outputs import OutputStore
 from ..persistence.recent import RecentStore
 from ..persistence.persona import PersonaStore
 from ..persistence.persona_card import PersonaCardStore
@@ -58,6 +68,7 @@ from ..persistence.persona_admin import PersonaAdminStore
 from ..persistence.persona_projection import PersonaProjectionStore
 from ..persistence.persona_versions import PersonaVersionStore
 from ..persistence.permits import NullWritePermit
+from ..persistence.proactive import ProactiveStore
 from ..persistence.reflections import ReflectionStore
 from ..persistence.roots import FileSystemRoots
 from ..persistence.shards import ArchiveShardStore
@@ -66,6 +77,7 @@ from ..persistence.state import StateStore
 from ..persistence.timeindex import TimeIndexStore
 from ..persistence.tombstones import ScopedTombstoneStore
 from ..persistence.turns import TURN_EVENT_TYPE, TurnRequestStore
+from ..persistence.working_summary import WorkingSummaryStore
 from ..ports import (
     AtomicJsonStore,
     Clock,
@@ -78,37 +90,102 @@ from ..ports import (
 from .durable import DurableEventStore
 
 
-def _evolution_evidence(facts: FactsView, reflections: ReflectionStore):
-    """Default B12 evidence rows: facts and reflections with source refs."""
+def _evolution_evidence(
+    facts: FactsView,
+    reflections: ReflectionStore,
+    *,
+    promotion_rules: Mapping[str, Sequence[str]],
+    min_support: int = 2,
+):
+    """Default B12 evidence rows as the unified M4 evidence DTO.
+
+    The old provider read different fields from the reflection rows than the
+    reflection service writes (`source_refs`/`source_keys`, no scope, no
+    maturity), so the evolution prompt could receive empty sources and a lost
+    scope. Rows are now built by `domain.growth_evidence.evidence_dto`, the same
+    shape the reflection layer derives: identity, origin (fact ids, event keys,
+    independent experiences), scope, maturity and eligibility. Facts are carried
+    as explanation only; their DTO is explicitly ineligible.
+    """
 
     def collect(character: str, request: Any = None) -> list[dict]:
         wanted = set(getattr(request, "source_refs", ()) or ())
         rows: list[dict] = []
         for row in facts.load(character):
-            refs = [str(item) for item in row.get("source_event_keys") or ()]
-            rows.append({
+            fact_row = {
                 "id": str(row.get("id") or ""),
                 "kind": "fact",
                 "text": str(row.get("text") or ""),
-                "source_keys": refs,
+                "source_keys": [
+                    str(item) for item in row.get("source_event_keys") or ()
+                ],
                 "status": str(row.get("status") or ""),
-            })
-        for row in reflections.load(character):
-            refs = [str(item) for item in (
-                row.get("source_refs") or row.get("source_keys") or ()
-            )]
-            rows.append({
-                "id": str(row.get("id") or ""),
-                "kind": "reflection",
-                "text": str(row.get("text") or row.get("summary") or ""),
-                "source_keys": refs,
-                "status": str(row.get("status") or ""),
+                "source": str(row.get("source") or ""),
+                "applies_to": dict(row.get("applies_to") or {}),
                 "invalidated_at": row.get("invalidated_at"),
+                "subject": row.get("subject"),
+            }
+            dto = evidence_dto(
+                fact_row, kind="fact",
+                promotion_rules=promotion_rules, min_support=min_support,
+            )
+            dto["evidence_kind"] = row.get("evidence_kind")
+            rows.append({**fact_row, "evidence": dto})
+        for row in reflections.load(character):
+            if not isinstance(row, Mapping):
+                continue
+            memory_kind = str(row.get("memory_kind") or "")
+            kind = "growth" if memory_kind in MEMORY_KINDS else "reflection"
+            source_row = dict(row)
+            source_row["kind"] = kind
+            dto = evidence_dto(
+                source_row, kind=kind,
+                promotion_rules=promotion_rules, min_support=min_support,
+            )
+            rows.append({
+                "id": dto["id"],
+                "kind": kind,
+                "text": dto["text"],
+                "source_keys": list(dto["source_keys"]),
+                "source_fact_ids": list(dto["source_fact_ids"]),
+                "status": dto["status"],
+                "memory_kind": memory_kind,
+                "applies_to": dict(dto["applies_to"]),
+                "scope_key": dto["scope_key"],
+                "invalidated_at": row.get("invalidated_at"),
+                "needs_rebuild": row.get("needs_rebuild"),
+                "subject": row.get("subject"),
+                "evidence": dto,
             })
         if wanted:
-            rows = [
+            matched = [
                 row for row in rows
-                if wanted & ({row["id"]} | set(row["source_keys"]))
+                if wanted & (
+                    {row["id"]}
+                    | set(row["source_keys"])
+                    | set(row.get("source_fact_ids") or ())
+                )
+            ]
+            # Facts that the matched evidence rests on stay in the pool as
+            # *explanation* even when the caller only named the understanding:
+            # the model needs to see what the conclusion is based on, while the
+            # eligibility gate still refuses to let a fact qualify on its own.
+            referenced = set()
+            for row in matched:
+                referenced.update(row.get("source_fact_ids") or ())
+                referenced.update(row.get("source_keys") or ())
+            explanation: list[dict] = []
+            for row in rows:
+                if row.get("kind") != "fact":
+                    continue
+                if (
+                    row in matched
+                    or row["id"] in referenced
+                    or set(row.get("source_keys") or ()) & referenced
+                ):
+                    explanation.append(row)
+            rows = explanation + [
+                row for row in matched if row.get("kind") != "fact"
             ]
         return rows
 
@@ -169,6 +246,95 @@ class _PublishCleaner:
     def cleanup(self, character: str, resolved: dict) -> dict:
         outcome = self._publish.invalidate_for_deletion(character, resolved)
         return {"status": "completed", "detail": dict(outcome)}
+
+
+class _OutputCleaner:
+    """Deletion cleaner: retire the assistant outputs a deleted cause produced.
+
+    An output whose cause (a task result, an open thread's source) is deleted
+    stops being a legitimate thing she said: the body is cleared and the record
+    is kept as an invalidated shell, so the id stays addressable and a client
+    holding the old list cannot resurrect the text (design section 6.4: deletion
+    reaches derived records, and the summary/projection is rebuilt).
+    """
+
+    def __init__(self, outputs: Any) -> None:
+        self._outputs = outputs
+
+    def cleanup(self, character: str, resolved: dict) -> dict:
+        if self._outputs is None:
+            return {"status": "skipped", "detail": {"reason": "outputs_not_wired"}}
+        keys = {
+            str(value) for value in (
+                list(resolved.get("fact_source_keys") or ())
+                + list(resolved.get("original_source_keys") or ())
+            ) if value
+        }
+        episode_ids = {
+            str(value) for value in resolved.get("episode_ids") or () if value
+        }
+        if not keys and not episode_ids:
+            return {"status": "completed", "detail": {"invalidated": 0}}
+        invalidated = 0
+        for row in self._outputs.list(character, limit=512):
+            if str(row.get("status") or "") == "invalidated":
+                continue
+            cause = row.get("cause") if isinstance(row.get("cause"), Mapping) else {}
+            cause_keys = {str(value) for value in cause.get("source_keys") or () if value}
+            if not (cause_keys & keys):
+                continue
+            receipt = self._outputs.invalidate(
+                character, str(row.get("output_id") or ""),
+                reason="cause_deleted",
+            )
+            if receipt.ok or receipt.duplicate:
+                invalidated += 1
+        return {"status": "completed", "detail": {"invalidated": invalidated}}
+
+
+class _ProactiveCleaner:
+    """Deletion cleaner: retire candidates whose reason was deleted.
+
+    A proactive candidate names the records that justify it, so a deletion that
+    reaches those records must reach the candidate too -- otherwise a queued
+    message would resurrect content the user deleted, which is exactly the
+    failure the B03 barrier exists to prevent.
+    """
+
+    def __init__(self, proactive: Any) -> None:
+        self._proactive = proactive
+
+    def cleanup(self, character: str, resolved: dict) -> dict:
+        if self._proactive is None:
+            return {"status": "skipped", "detail": {"reason": "proactive_not_wired"}}
+        return self._proactive.invalidate_for_deletion(character, resolved)
+
+
+class _WorkingSummaryPair:
+    """The projector plus its audit store, as maintenance wants them."""
+
+    __slots__ = ("projector", "store")
+
+    def __init__(self, projector: Any, store: Any) -> None:
+        self.projector = projector
+        self.store = store
+
+
+class _SummaryCacheInvalidator:
+    """Cache invalidator: mark the audit summary stale after a deletion.
+
+    Only the audit row is touched: the summaries themselves are projections and
+    are re-derived on the next read, so there is nothing else to invalidate.
+    """
+
+    def __init__(self, store: Any) -> None:
+        self._store = store
+        self.__name__ = "working_summary_cache"
+
+    def __call__(self, character: str) -> None:
+        if self._store is None:
+            return
+        self._store.invalidate(character, reason="deletion")
 
 
 class _CombinedCleaner:
@@ -248,6 +414,20 @@ class MemoryCore:
     outbox_dispatcher: OutboxDispatcher
     maintenance: MaintenanceService
     timeindex_factory: Callable[[str], TimeIndexStore]
+    #: M5: assistant-output records (body + cause + delivery receipts) and the
+    #: rebuildable working-summary projector. Both are additive: a core built by
+    #: an embedder that ignores them behaves exactly as before.
+    outputs: OutputStore
+    output_service: OutputService
+    #: The audit cache for the working summaries. The projector that derives
+    #: them is 'working_summary_service'; no read path consumes this store.
+    working_summary: WorkingSummaryStore
+    working_summary_service: WorkingSummaryService
+    #: M6-A: durable proactive candidates (cause + source + state) and the
+    #: pending-chat intent queue projector/service. Additive like M5: a core that
+    #: ignores them behaves exactly as before.
+    proactive: ProactiveStore
+    proactive_service: ProactiveService
 
     def recover(self, character: str) -> RecoveryResult:
         """Replay the unapplied journal tail; idempotent, call before writes.
@@ -293,6 +473,7 @@ def build_memory_core(
     maintenance_settings: MaintenanceSettings | None = None,
     evolution_settings: EvolutionSettings | None = None,
     scheduler_settings: SchedulerSettings | None = None,
+    proactive_settings: ProactiveSettings | None = None,
     migration_hooks: Sequence[Callable[..., Any]] = (),
 ) -> MemoryCore:
     """Wire the B03 stack for an explicit data root (test/demo/embedder)."""
@@ -402,7 +583,16 @@ def build_memory_core(
     evolution = EvolutionStore(
         roots=roots, store=store, clock=clock, permit=permit, barrier=barrier,
     )
-    evidence_provider = _evolution_evidence(facts, reflections)
+    # The service defaults to EvolutionSettings() when none is injected; read the
+    # same default here so the provider and the gate cannot disagree on the
+    # independent-experience threshold.
+    effective_evolution_settings = evolution_settings or EvolutionSettings()
+    evidence_provider = _evolution_evidence(
+        facts,
+        reflections,
+        promotion_rules=PROMOTION_RULES,
+        min_support=int(effective_evolution_settings.evidence_min_support),
+    )
     evolution_service = EvolutionService(
         roots=roots, store=evolution, card_service=persona_card_service,
         evidence_provider=evidence_provider,
@@ -427,6 +617,57 @@ def build_memory_core(
         evidence_provider=evidence_provider, barrier=barrier, clock=clock,
         permit=permit, settings=scheduler_settings,
     )
+    # M5: assistant outputs. The service owns the visibility rule -- only the
+    # parts a delivery receipt names become shared conversation -- so it is
+    # wired with the same recent store the turns use, and with the journal so a
+    # crash between the receipt and the recent append is repaired by replay.
+    outputs = OutputStore(
+        roots=roots, store=store, clock=clock, permit=permit,
+    )
+    output_service = OutputService(
+        store=outputs, recent=recent, journal=journal, barrier=barrier,
+        clock=clock, permit=permit,
+    )
+    # M5: the three working summaries are projections over the authoritative
+    # records (rules, growth/reflection rows, facts, state, directives). The
+    # projector is read-only; the store behind it is an audit cache that no read
+    # path consumes.
+    working_summary_store = WorkingSummaryStore(
+        roots=roots, store=store, clock=clock, permit=permit,
+    )
+    working_summary = WorkingSummaryService(
+        character="",
+        clock=clock,
+        facts=facts,
+        reflections=reflection_service,
+        persona=persona_service,
+        state=state_service,
+        directives=directives,
+        recent=recent,
+        barrier=barrier,
+        card=persona_card_service,
+    )
+    # M6-A: proactive candidates. The service owns cause/source provenance and
+    # the send -> persist -> receipt loop; the body itself lives in the M5 output
+    # records, so an undelivered proactive line is never a shared experience.
+    # Derivation reads state/reflections, the gates read directives and the
+    # deletion barrier, and sending writes an output record.
+    proactive_store = ProactiveStore(
+        roots=roots, store=store, clock=clock, permit=permit,
+    )
+    proactive_service = ProactiveService(
+        store=proactive_store,
+        clock=clock,
+        permit=permit,
+        state=state_service,
+        reflections=reflection_service,
+        facts=facts,
+        directives=directives,
+        barrier=barrier,
+        outputs=output_service,
+        journal=journal,
+        settings=proactive_settings,
+    )
     turn_requests = TurnRequestStore(
         roots=roots, store=store, clock=clock, permit=permit,
     )
@@ -447,11 +688,16 @@ def build_memory_core(
         services = DeletionServices(
             reflections=reflection_service
             if services.reflections is None else services.reflections,
+            # M5: the assistant outputs a deleted cause produced are retired in
+            # the same step as the persona derivations (they are derived content
+            # exactly like a published version).
             persona=_CombinedCleaner(
                 _ProjectionCleaner(persona_projection_service),
                 persona_service, persona_card_service,
                 _PublishCleaner(persona_publish),
                 _AdminCleaner(persona_admin_service),
+                _OutputCleaner(output_service),
+                _ProactiveCleaner(proactive_service),
             ) if services.persona is None else services.persona,
             recent=RecentDeletionCleaner(recent, barrier),
             # S02/R01: invalidate committed turn results for deleted sources.
@@ -468,6 +714,9 @@ def build_memory_core(
             turn_results=services.turn_results,
             consumer_refs=consumer_refs,
         )
+    cache_invalidators = tuple(cache_invalidators) + (
+        _SummaryCacheInvalidator(working_summary_store),
+    )
     deletion_service = DeletionService(
         roots=roots,
         journal=journal,
@@ -511,6 +760,8 @@ def build_memory_core(
         gate=gates,
         timeindex_factory=timeindex_factory,
         corrections=correction_service,
+        conversation_state=ConversationState(state_service, barrier, clock),
+        proactive=proactive_service,
     )
     compression = CompressionService(
         recent=recent, barrier=barrier, clock=clock, model=model,
@@ -518,6 +769,8 @@ def build_memory_core(
     )
     # B06: read-only recall over the B05 stores; token/vector providers are
     # optional ports (BM25-only fallback when no embedding is injected).
+    # M5: recall also gets the state snapshot and the summary projector, so a
+    # single build_turn_context serves one coherent version of both.
     recall = RecallService(
         clock=clock,
         facts=facts,
@@ -529,6 +782,8 @@ def build_memory_core(
         embedding=embedding_provider,
         settings=recall_settings,
         roots=roots,
+        state=state_service,
+        working_summary=working_summary,
     )
     # B07: outbox dispatch + one maintenance round; no background task is
     # started here (the standalone entry / host supervisor owns scheduling).
@@ -549,6 +804,12 @@ def build_memory_core(
         recover=sink.recover,
         scheduler=evolution_scheduler,
         migrations=tuple(migration_hooks or ()),
+        # M5: the audit-cache refresh step. Degrades to skipped when unwired.
+        working_summary=_WorkingSummaryPair(working_summary, working_summary_store),
+        # M6-A: derive proactive candidates in the background pass. Deriving
+        # only registers reasons; no body is generated and nothing is sent from
+        # a maintenance round.
+        proactive=proactive_service,
     )
     from ..persistence.consumer_receipts import ConsumerReceiptStore, RECEIPT_EVENT
     consumer_receipts = ConsumerReceiptStore(roots=roots, store=store, permit=permit)
@@ -599,6 +860,12 @@ def build_memory_core(
         outbox_dispatcher=outbox_dispatcher,
         maintenance=maintenance,
         timeindex_factory=timeindex_factory,
+        outputs=outputs,
+        output_service=output_service,
+        working_summary=working_summary_store,
+        working_summary_service=working_summary,
+        proactive=proactive_store,
+        proactive_service=proactive_service,
     )
 
 

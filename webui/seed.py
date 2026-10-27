@@ -454,10 +454,34 @@ def _reflection_row(
     needs_rebuild: bool = False,
     absorbed_into: str | None = None,
     entity: str = "relationship",
+    experiences: list[tuple[str, list[str]]] | None = None,
 ) -> dict[str, Any]:
+    """One demo reflection row in the host shape, plus the M4 support basis.
+
+    `experiences` names the *independent* experiences (one episode each) the
+    row rests on, so the demo data follows the same rule real synthesis does
+    instead of leaving the maturing gate to guess. When it is omitted each event
+    key is treated as its own experience, which is what a conversation-per-key
+    seed naturally is.
+    """
     evidence = [
         {"source_key": key, "weight": round(1.0 + index * 0.1, 2)}
         for index, key in enumerate(event_keys)
+    ]
+    groups = experiences
+    if groups is None:
+        groups = [("episode:" + key, [key]) for key in event_keys]
+    basis = [
+        {
+            "experience": experience,
+            "facts": [],
+            "support": [
+                {"key": key, "fact_id": "", "kind": "",
+                 "flags": ["actual_result"]}
+                for key in keys
+            ],
+        }
+        for experience, keys in groups
     ]
     row: dict[str, Any] = {
         "id": row_id,
@@ -482,6 +506,15 @@ def _reflection_row(
         "protected": False,
         "schema_version": 2,
         "evidence": evidence,
+        # M4: independent experiences + derived count/flag buckets. Written on
+        # new demo rows so they go through the strict rule, not the legacy one.
+        "support_basis": basis,
+        "support_event_keys": list(event_keys),
+        "support_count": len(basis),
+        "support_evidence": {
+            "actual_result": list(event_keys),
+            "user_feedback": [], "both_party": [], "real_contact": [],
+        },
         "persona_ids": [absorbed_into] if absorbed_into else [],
     }
     if status == "promoted":
@@ -497,7 +530,25 @@ def _growth_row(
     status: str,
     support_keys: list[str],
     created_at: str,
+    *,
+    experiences: list[tuple[str, list[str]]] | None = None,
 ) -> dict[str, Any]:
+    """One demo growth row with the M4 support basis (see _reflection_row)."""
+    groups = experiences
+    if groups is None:
+        groups = [("episode:" + key, [key]) for key in support_keys]
+    basis = [
+        {
+            "experience": experience,
+            "facts": [],
+            "support": [
+                {"key": key, "fact_id": "", "kind": "",
+                 "flags": ["actual_result"]}
+                for key in keys
+            ],
+        }
+        for experience, keys in groups
+    ]
     return {
         "id": row_id,
         "text": claim,
@@ -508,7 +559,8 @@ def _growth_row(
         "memory_kind": kind,
         "growth_key": f"{kind}:{claim}",
         "support_event_keys": list(support_keys),
-        "support_count": len(support_keys),
+        "support_count": len(basis),
+        "support_basis": basis,
         "support_evidence": {
             "actual_result": list(support_keys),
             "user_feedback": [],
@@ -606,6 +658,15 @@ async def _seed(core) -> dict[str, int]:
             ["fact_run", "fact_trip"], [keys["day04-user"], keys["day13-user"]],
             at("day04-user"), absorbed_into="prom_ref_run",
         ),
+        # The tone understanding the demo evolution proposals rest on: two
+        # independent experiences (day one and the recent turn), so it is a
+        # mature candidate under M4's eligibility gate. `fact_tone` stays in the
+        # pool as its explanation source.
+        _reflection_row(
+            "ref_tone", "用户喜欢温柔、具体的表达，不喜欢被反复追问", "confirmed", 1.8,
+            ["fact_tone"], [keys["day01-user"], keys["recent-user"]],
+            at("day01-user"),
+        ),
         _reflection_row(
             "ref_work", "用户在意项目上线的节奏，也怕被临时需求打断", "confirmed", 1.4,
             ["fact_work"], [keys["day05-user"]], at("day05-user"),
@@ -696,7 +757,7 @@ async def _seed(core) -> dict[str, int]:
     # 8) Three evolution proposals: one accepted, one rejected, one pending.
     proposal_one = await core.evolution_service.propose(CHARACTER, {
         "base_revision": revision,
-        "source_refs": ["fact_tone"],
+        "source_refs": ["ref_tone", "fact_tone"],
         "focus_sections": ["tone"],
         "reason": EVOLUTION_REASON,
         "request_id": "seed-evolution-1",
@@ -718,7 +779,7 @@ async def _seed(core) -> dict[str, int]:
 
     proposal_two = await core.evolution_service.propose(CHARACTER, {
         "base_revision": revision,
-        "source_refs": ["fact_tone"],
+        "source_refs": ["ref_tone", "fact_tone"],
         "focus_sections": ["tone"],
         "reason": "这次提案与当前语气重复",
         "request_id": "seed-evolution-2",
@@ -733,7 +794,7 @@ async def _seed(core) -> dict[str, int]:
 
     proposal_three = await core.evolution_service.propose(CHARACTER, {
         "base_revision": revision,
-        "source_refs": ["fact_tone"],
+        "source_refs": ["ref_tone", "fact_tone"],
         "focus_sections": ["tone"],
         "reason": "等待人工审核的候选提案",
         "request_id": "seed-evolution-3",

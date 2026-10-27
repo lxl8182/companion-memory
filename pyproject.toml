@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "companion-memory"
-version = "0.1.0.dev4"
+version = "0.1.0.dev6"
 description = "Host-independent companion memory and persona evolution core"
 readme = "README.md"
 requires-python = ">=3.11"

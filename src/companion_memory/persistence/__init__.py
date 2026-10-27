@@ -23,6 +23,8 @@ from .journal import (
     EventJournal,
 )
 from .outbox import OutboxOp, OutboxStore
+from .outputs import OutputRecord, OutputStore
+from .proactive import CandidateRecord, ProactiveStore
 from .recent import RecentStore
 from .permits import NullWritePermit, RejectingWritePermit
 from .records import (
@@ -44,6 +46,7 @@ from .source_ledger import LedgerEntry, SourceLedger
 from .timeindex import TimeIndexStore
 from .tombstones import ScopedTombstoneStore, TombstoneState
 from .version_cache import VersionReader, file_signature
+from .working_summary import WorkingSummaryStore
 
 __all__ = [
     "BarrierIndex",
@@ -63,9 +66,13 @@ __all__ = [
     "IdempotencyStore",
     "KNOWN_EVENT_TYPES",
     "LedgerEntry",
+    "CandidateRecord",
     "NullWritePermit",
     "OutboxOp",
     "OutboxStore",
+    "OutputRecord",
+    "OutputStore",
+    "ProactiveStore",
     "RecentStore",
     "RejectingWritePermit",
     "Reservation",
@@ -77,6 +84,7 @@ __all__ = [
     "TimeIndexStore",
     "TombstoneState",
     "VersionReader",
+    "WorkingSummaryStore",
     "canonical_json",
     "event_fingerprint",
     "event_from_snapshot",

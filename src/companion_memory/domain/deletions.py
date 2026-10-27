@@ -496,6 +496,7 @@ class DeletionService:
         # and queued work must still be cleaned).
         fact_source_keys: list[str] = list(record.get("source_keys") or ())
         texts: list[str] = []
+        requested_keys = {str(key) for key in (record.get("source_keys") or ())}
         for row in facts_rows:
             row_id = row.get("id")
             row_keys = {
@@ -505,11 +506,12 @@ class DeletionService:
             row_episodes = episode_ids_of(row)
             row_text = row.get("text")
             row_hash = text_hash(row_text) if isinstance(row_text, str) else ""
-            hit = False
-            if isinstance(row_id, str) and row_id in explicit_facts:
-                hit = True
-            if not hit and episode_wanted and (row_episodes & episode_wanted):
-                hit = True
+            hard = bool(
+                (isinstance(row_id, str) and row_id in explicit_facts)
+                or (episode_wanted and (row_episodes & episode_wanted))
+                or (target_hashes and row_hash in target_hashes)
+            )
+            hit = hard
             if (
                 not hit
                 and not explicit_facts
@@ -518,9 +520,13 @@ class DeletionService:
             ):
                 if subject in ("", "private") or row_matches_subject(row, subject):
                     hit = True
-            if not hit and target_hashes and row_hash in target_hashes:
-                hit = True
             if not hit:
+                continue
+            if not hard and (row_keys - requested_keys):
+                # Incidental match on a fact that still rests on another
+                # source: the row survives, so nothing about it may become a
+                # tombstone. Recording its id or text hash here would delete it
+                # from recall even though the row itself was kept (G08).
                 continue
             if isinstance(row_id, str) and row_id and row_id not in matched_ids:
                 matched_ids.append(row_id)
@@ -536,6 +542,16 @@ class DeletionService:
         missing = [fact_id for fact_id in explicit_facts if fact_id not in facts_by_id]
         resolved = {
             "fact_ids": matched_ids,
+            # Hard targets: the caller named this fact (or its exact text) or
+            # deleted the episode it belongs to. A row matched only through a
+            # source key may still stand on another source.
+            "explicit_fact_ids": sorted(set(explicit_facts)),
+            "target_text_hashes": sorted(target_hashes),
+            # Only the keys the request actually named. `fact_source_keys` below
+            # also collects keys found on the matched rows (those feed the plugin
+            # tombstone); using that union as the deletion key set would shed a
+            # surviving row remaining support too (G08).
+            "requested_source_keys": sorted([str(key) for key in (record.get("source_keys") or ())]),
             "reflection_ids": explicit_reflections,
             "persona_ids": explicit_persona,
             "episode_ids": sorted(matched_episodes),
@@ -647,6 +663,15 @@ class DeletionService:
                 if item.get("text_hash")
             ],
             "fact_source_keys": list(record.get("source_keys") or ()),
+            "requested_source_keys": list(record.get("source_keys") or ()),
+            "explicit_fact_ids": [
+                str(item.get("id")) for item in targets
+                if item.get("type") == "fact" and item.get("id")
+            ],
+            "target_text_hashes": [
+                str(item.get("text_hash")) for item in targets
+                if item.get("text_hash")
+            ],
             "narrowed_reflection_ids": narrowed_reflections,
             "narrowed_persona_ids": narrowed_persona,
             "texts": [],
@@ -661,7 +686,15 @@ class DeletionService:
         """Remove resolved facts/archive rows; archive-first two-file commit."""
         fact_ids = {str(value) for value in resolved.get("fact_ids") or ()}
         text_hashes = {str(value) for value in resolved.get("text_hashes") or ()}
-        source_keys = {str(value) for value in resolved.get("fact_source_keys") or ()}
+        # Match and shed only on the keys the request named; `fact_source_keys`
+        # is the wider set persisted for plugin cleanup.
+        requested = resolved.get("requested_source_keys")
+        source_keys = {
+            str(value) for value in (
+                requested if requested is not None
+                else resolved.get("fact_source_keys") or ()
+            )
+        }
         episode_ids = {str(value) for value in resolved.get("episode_ids") or ()}
         if not (fact_ids or text_hashes or source_keys or episode_ids):
             return {"status": "skipped", "detail": {"deleted": 0, "archive": 0}}
@@ -678,13 +711,61 @@ class DeletionService:
                 return True
             return bool(episode_ids_of(row) & episode_ids)
 
+        def _shed_support(row: dict[str, Any]) -> bool:
+            """Drop the deleted keys from a row that still has other sources.
+
+            A fact stated twice keeps existing when only one source is deleted;
+            only a row left with no support at all is removed. Returns True when
+            the row was modified in place.
+            """
+            keys = [
+                str(key) for key in row.get("source_event_keys") or ()
+                if isinstance(key, str)
+            ]
+            kept = [key for key in keys if key not in source_keys]
+            if kept == keys:
+                return False
+            row["source_event_keys"] = kept
+            return True
+
+        hard_ids = {str(value) for value in resolved.get("explicit_fact_ids") or ()}
+        hard_hashes = {str(value) for value in resolved.get("target_text_hashes") or ()}
+
+        def _survives(row: Mapping[str, Any]) -> bool:
+            if not _matched(row):
+                return True
+            # A row the caller named, or whose episode was deleted, always goes.
+            row_id = row.get("id")
+            if isinstance(row_id, str) and row_id in hard_ids:
+                return False
+            text = row.get("text")
+            if isinstance(text, str) and text_hash(text) in hard_hashes:
+                return False
+            if episode_ids_of(row) & episode_ids:
+                return False
+            # Otherwise only the deleted source is shed; the row survives while
+            # it still rests on another real source (G08).
+            if isinstance(row, dict) and _shed_support(row):
+                return bool(row.get("source_event_keys"))
+            return False
+
         active = list(self._facts.load(character))
         archive = list(self._facts.load_archive(character))
-        kept_active = [row for row in active if not _matched(row)]
-        kept_archive = [row for row in archive if not _matched(row)]
+        before_active = [(row.get("id"), tuple(row.get("source_event_keys") or ()))
+                         for row in active if isinstance(row, dict)]
+        kept_active = [row for row in active if _survives(row)]
+        before_archive = [(row.get("id"), tuple(row.get("source_event_keys") or ()))
+                          for row in archive if isinstance(row, dict)]
+        kept_archive = [row for row in archive if _survives(row)]
         deleted_active = len(active) - len(kept_active)
         deleted_archive = len(archive) - len(kept_archive)
-        if deleted_active or deleted_archive:
+        # A surviving row whose support shrank is still a real change: committing
+        # only when a row disappeared silently discarded the support removal.
+        after_active = [(row.get("id"), tuple(row.get("source_event_keys") or ()))
+                        for row in kept_active if isinstance(row, dict)]
+        after_archive = [(row.get("id"), tuple(row.get("source_event_keys") or ()))
+                         for row in kept_archive if isinstance(row, dict)]
+        if deleted_active or deleted_archive or before_active != after_active or before_archive != after_archive:
             self._facts.commit(
                 character, active=kept_active, archive=kept_archive,
             )

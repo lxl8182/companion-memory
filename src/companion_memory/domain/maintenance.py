@@ -48,6 +48,16 @@ STEP_ORDER = (
     "persona_corrections",
     "growth_reconcile",
     "evolution_trigger",
+    # M5: the three working summaries are rebuilt from the records the earlier
+    # steps just settled (reflections reconciled, deletions retried), so this
+    # runs after them and before the optional compaction.
+    "working_summary",
+    # M6-A: proactive candidates are derived after the records they rest on are
+    # settled (reflections reconciled, deletions retried) -- design section 12.1
+    # puts "proactive candidate maintenance" in the background pass, not at the
+    # front of a turn. Deriving here only registers candidates; nothing is sent
+    # without an explicit dispatch and a pre-send recheck.
+    "proactive_candidates",
     "deletion_retry",
     "journal_compaction",
 )
@@ -66,6 +76,12 @@ class MaintenanceSettings:
     enable_reflection: bool = True
     enable_archive: bool = True
     enable_growth_reconcile: bool = True
+    #: M5: refresh the working-summary audit cache. The summaries themselves are
+    #: projections re-derived on every read, so turning this off costs the audit
+    #: row only -- never the answer a caller gets.
+    enable_working_summary: bool = True
+    #: M6-A: derive proactive candidates in the background pass.
+    enable_proactive: bool = True
     enable_deletion_retry: bool = True
     enable_compaction: bool = False
     synthesis_limit: int = 1
@@ -128,6 +144,9 @@ class MaintenanceService:
         migrations: Sequence[Callable[..., Any]] = (),
         compaction_seeds: Callable[..., Any] | None = None,
         scheduler: Any = None,
+        working_summary: Any = None,
+        proactive: Any = None,
+        proactive_subject: str = "private",
     ) -> None:
         self._dispatcher = dispatcher
         self._deletion_service = deletion_service
@@ -141,6 +160,13 @@ class MaintenanceService:
         self._migrations = tuple(migrations or ())
         self._compaction_seeds = compaction_seeds
         self._scheduler = scheduler
+        #: M5: (projector, cache store) or None. Refreshing is bookkeeping: the
+        #: next read re-derives the summary whether or not this ever ran.
+        self._working_summary = working_summary
+        #: M6-A: the proactive service. Deriving candidates is the only step that
+        #: touches it; sending is never part of a maintenance round.
+        self._proactive = proactive
+        self._proactive_subject = str(proactive_subject or "private")
         self._tasks: dict[str, asyncio.Task[Any]] = {}
         self._stops: dict[str, asyncio.Event] = {}
         self._last: dict[str, MaintenanceResult] = {}
@@ -344,6 +370,46 @@ class MaintenanceService:
                         record("evolution_trigger", STEP_OK, detail)
                 except Exception as exc:  # noqa: BLE001
                     failed("evolution_trigger", exc)
+
+            # 8c. rebuild the three working summaries (M5). This is the only
+            #     writer of the audit row; the summaries a caller receives are
+            #     always re-derived from the records, so a failure here degrades
+            #     observability and nothing else.
+            if not self._settings.enable_working_summary:
+                record("working_summary", STEP_SKIPPED, "disabled")
+            elif self._working_summary is None:
+                record("working_summary", STEP_SKIPPED, "summary projector not wired")
+            else:
+                try:
+                    detail = await self._call_hook(
+                        self._refresh_working_summary, name,
+                    )
+                    record("working_summary", STEP_OK, detail)
+                except Exception as exc:  # noqa: BLE001
+                    failed("working_summary", exc)
+
+            # 8d. derive proactive candidates (M6-A). Deriving registers a reason
+            #     and nothing else: no body is generated here, and a candidate
+            #     still has to pass the pre-send recheck before it can be said.
+            if not self._settings.enable_proactive:
+                record("proactive_candidates", STEP_SKIPPED, "disabled")
+            elif self._proactive is None:
+                record("proactive_candidates", STEP_SKIPPED, "proactive not wired")
+            else:
+                try:
+                    result = await self._call(
+                        self._proactive.derive, name,
+                        subject=self._proactive_subject,
+                    )
+                    payload = dict(result or {})
+                    detail = "created={created} duplicates={duplicates} refused={refused}".format(
+                        created=len(payload.get("created") or ()),
+                        duplicates=len(payload.get("duplicates") or ()),
+                        refused=len(payload.get("refused") or ()),
+                    )
+                    record("proactive_candidates", STEP_OK, detail)
+                except Exception as exc:  # noqa: BLE001
+                    failed("proactive_candidates", exc)
 
             # 9. retry pending/failed deletions (plugin step excluded inside
             #    DeletionService.retry); one failure does not stop the rest.
@@ -594,6 +660,33 @@ class MaintenanceService:
             return await self._call(fn, character, limit=limit)
         except TypeError:
             return await self._call(fn, character)
+
+    async def _refresh_working_summary(self, character: str) -> str:
+        """Rebuild the audit summary row; returns a one-line detail."""
+        pair = self._working_summary
+        projector = getattr(pair, "projector", None) or (pair[0] if isinstance(pair, tuple) else pair)
+        store = getattr(pair, "store", None) or (pair[1] if isinstance(pair, tuple) else None)
+        if projector is None or store is None:
+            return "not wired"
+        if hasattr(projector, "refresh_cache"):
+            payload = await asyncio.to_thread(
+                projector.refresh_cache, character, store,
+            )
+            key = str(payload.get("rebuild_key") or "")
+            return f"rebuild_key={key}" if key else "refreshed"
+        payload = await asyncio.to_thread(projector.build, character)
+        await asyncio.to_thread(
+            store.record, character, getattr(payload, "subject", "private"),
+            {
+                "rebuild_key": getattr(payload, "rebuild_key", ""),
+                "built_at": getattr(payload, "built_at", None),
+                "sections": {},
+                "source_versions": dict(
+                    getattr(payload, "source_versions", {}) or {}
+                ),
+            },
+        )
+        return "refreshed"
 
     async def _call_hook(self, fn: Any, character: str) -> Any:
         """Hooks may take the character or no argument at all."""

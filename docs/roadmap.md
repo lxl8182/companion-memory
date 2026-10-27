@@ -344,20 +344,345 @@ bridge 验证：`npm run build` exit 0；定向 `bridge-events/prompt/router/del
 
 **2.6 记忆与陪伴连续性专项（MC00—MC07）**
 
-2026-10-27 用户要求形成完整方案，并明确开发使用本机代码。执行规格见 [记忆与陪伴连续性改造方案](companion-continuity-plan.md)，涵盖完整经历、时间、召回、事项/状态、反馈、成长、主动交流及 Git 与版本包发布。MC02 承接已有 S06/S07，沿用当前样本与基线。当前仅完成方案编写，下面工作包均未开始；不改动其它专项的既有完成状态。
+2026-10-27 用户要求形成完整方案，并明确开发使用本机代码。执行规格见 [记忆与陪伴连续性改造方案](companion-continuity-plan.md)，涵盖完整经历、时间、召回、事项/状态、反馈、成长、主动交流及 Git 与版本包发布。新增 [养成感与活人感设计](companion-growth-design.md)，整合 Kindroid、Hindsight、Mem0、Zep、Letta、Honcho 对照及四条主链，明确单次教导快速采用、自主成长按独立经历成熟。MC02 承接已有 S06/S07，沿用当前样本与基线。现有源码已有独立 Git 基线；以下工作包仍待按各项完成标准实施验收，不改动其它专项的既有完成状态。
 
 | 工作包 | 前置 | 状态 | 完成标准 |
 |---|---|---|---|
-| MC00 源码与发布基线 | 当前工作树核对 | 未开始 | 本机源码纳入正确 Git 仓库，版本包来自可追踪提交，发布清单与包白名单可核对 |
-| MC01 时间与助手后续输出 | MC00 | 未开始 | 原始时间锚点稳定，咒语/任务后续助手正文、输出回执和删除/补交闭环通过本机验收 |
-| MC02 召回增强 | MC00 | 未开始 | A 短句/指代/背景通过原样本与新增场景；B 语义配置具备后完成向量与降级验收，分别记录状态 |
+| MC00 源码与发布基线 | 当前工作树核对 | 已完成（2026-10-27） | 独立仓库 9725445、origin 齐平、wheel 构建链与包白名单可核对；三个文档已入工作树 |
+| MC01 时间与助手后续输出 | MC00 | **已完成（M1 + M5，2026-10-27）** | 原始时间锚点（G11）、证据与参考分离、重复来源合并（G08）、evidence_kind；助手正文与输出回执（`POST /v1/outputs`，按片段序号幂等）、待投递正文可持久补发、只有送达片段进入已发生对话、删除来源清正文留 id |
+| MC02 召回增强 | MC00 | 未开始（S06 基线已存在） | A 短句/指代/背景通过原样本与新增场景；B 语义配置具备后完成向量与降级验收，分别记录状态 |
 | MC03 事项与共同经历 | MC01、MC02-A | 未开始 | 同主体跨会话续接，进展、终态、禁提及来源删除生效 |
-| MC04 状态、事实更新与反馈 | MC03 | 未开始 | 固定快照注入相关状态/事项/经历/成长，更正更新与实际反馈按来源生效 |
-| MC05 反思与相处成长 | MC04 | 未开始 | 反思允许无结论，独立经历支持可追踪，行为采用与人格提案可纠正和撤回 |
-| MC06 主动交流 | MC01、MC03、MC04 | 未开始 | 有来源候选、原生唤醒、用户抢占、时机控制及发送保存闭环通过验收 |
-| MC07 多端与整体发布验收 | 已交付目标批次 | 未开始 | 多端范围和管理合同、完整场景、版本安装与代码回退通过对应验收 |
+| MC04 状态、事实更新与反馈 | MC03；教导子项 MC04-T 可在 MC01 必要基础后先行 | 进行中（**MC04-T 已交付 2026-10-27**） | **已交付**：明确持久教导单次形成 tone 局部规则、下一轮采用、重启保持、自动演化关闭仍可用、可撤销。**剩余**：固定快照注入相关状态/事项/经历/成长，更正更新与实际反馈按来源生效 |
+| MC05 反思与相处成长 | MC04 | **已完成（M3+M4，2026-10-27）** | 反思允许 no_change、七种局部操作、superseded/withdrawn 分离；独立经历计数、证据类型从 evidence_kind 推导、演化资格门槛、删除与更正同口径重算、旧格式兼容回退 |
+| MC06 主动交流 | MC01、MC03、MC04 | 进行中（M6 候选核心与 DSH 渲染已完成） | 五类真实缘由候选、待聊意图与四操作、发送前重检、时机与回执核心合同已通过合成验收；剩 DSH 取候选/唤醒/发送/outputs 回执实际接线，纳入 MC07 渠道收口 |
+| MC07 多端与整体发布验收 | 已交付目标批次 | 进行中（本机包与独立安装检查已完成；渠道验收待做） | 多端范围、版本安装与回退；接通 DSH 主动轮拉取/唤醒/生成/发送/保存，任务反馈正文进入 outputs；真实 QQ 教导、主动消息和重启恢复验收 |
 
-推荐第一轮按 MC00 → MC01 → MC02-A 推进。源码与测试、修复和构建都在本机进行；服务器接收精确版本 wheel/tgz 并运行渠道验收。Git 管理版本，SSH 传输构建包；正常发布不覆盖安装目录单文件，也不重启无关的 SnowLuma/QQ。语义后端、新付费服务或账号的配置条件按方案 MC02-B 单独处理。
+推荐先核对 MC00 的现有基线与打包条件，再推进 MC01 → MC04-T → MC02-A / MC03。MC04-T 直接教导独立于自动演化开关，完整依赖与验收见新设计 §8、§13。源码与测试、修复和构建都在本机进行；服务器接收精确版本 wheel/tgz 并运行渠道验收。Git 管理版本，SSH 传输构建包；正常发布不覆盖安装目录单文件，也不重启无关的 SnowLuma/QQ。语义后端、新付费服务或账号的配置条件按方案 MC02-B 单独处理。
+
+**M1 事实语义交付记录（2026-10-27，工作树 `F:\game\projectNEKO\companion-memory`）**
+
+范围：只动事实层与删除层，不碰人格卡、不碰教导链路。交付四件事，全部有行为测试。
+
+1. **证据与参考分离（设计 §6.2）**。`domain/extraction.py` 原先把用于消解指代的前文来源键并进每条事实的 `source_event_keys`，使每条事实都携带整个会话，下游成长门槛把会话长度当成独立经历数。改为 `evidence_keys`（本轮真实来源）与 `context_keys`（仅前文消歧）分开；事实行新增 `context_refs` 字段，`source_event_keys` 只装证据。
+2. **相对时间锚点（G11）**。`_fact_row` 原先用 `self._clock.now()`（队列处理时刻）解析 `event_when`；`ingest_turn` 的 `occurred_at` 只进了来源账本。改为把业务时间写入 outbox payload（`occurred_at`），经 `process_outbox` → `extract_facts` → `_persist_candidates` → `_fact_row` 一路透传；老 payload 缺该字段时回退 `clock.now()`，不使窗口失败。
+3. **重复事实合并来源（G08）**。`_persist_candidates` 命中既有哈希时原先直接 `continue`（只有一条 ai_disclosure 升级特例），第二次真实提及完全丢弃，删掉首次来源后事实随之消失。改为合并 `source_event_keys`、记录 `context_refs`、推进 `last_confirmed_at` 与 `confirm_count`；重试与镜像携带同一键因而不增加支持。
+4. **`evidence_kind` 字段**。事实行新增 `evidence_kind`（user_assertion / explicit_feedback / observed_action / tool_result / agent_expression / quoted_example），模型给了合法值就采用，非法或缺失按来源兜底；为 M3/M4 的成长门槛提供真实依据类型，取代「一律按 actual_result 计」。
+
+配套删除层改动（`domain/deletions.py`）：`_delete_facts` 区分**硬目标**（明确点名的事实 id、精确文本哈希、被删集所属的 episode）与**偶然命中**（仅靠 source_key 命中）。硬目标直接删除；偶然命中若仍有其它来源，只移除被删的 key 并保留事实。同时补上「支持减少但行仍在」也提交落盘的判定（原实现仅在行消失时 commit，support 收缩被静默丢弃）。
+
+验证：新增 `tests/test_m1_fact_semantics.py` **6 项**（重复合并与单源删除存活、重试不加支持、隔日队列仍按原话解析「明天」、老 payload 兼容、context_refs 不计支持且删除参考不动事实、evidence_kind 白名单兜底）。既有 `test_b04_extraction` 的参考语义断言按新合同改为 6 项断言（证据=ctx3、参考=ctx1、删参考保留事实、删证据删除事实）。全量 `unittest discover` **299 项，2 项已知问题**：`test_s05_evolution_display` 的 `from tests.test_b12_evolution` 导入失败（无 `tests/__init__.py`，既有）；1 skipped。定向 `test_m1 + test_b04 + test_b03_deletion + test_b03_barrier + test_b03_correction` 全绿。
+
+前后对比实测（同一句话，队列延迟两天处理）：队列时间 2026-10-29、原话说于 2026-10-27「明天面试」——修改前 `event_start_at=2026-10-30`（错两天），修改后 `2026-10-28`。两次独立提及「喜欢乌龙茶」：修改后 1 行事实、2 个来源、`confirm_count=2`；删除首源后事实仍在（修改前删除即消失）。
+
+未做（留给后续批次）：助手后续正文与输出回执（MC01 后半）、主题反思与 no_change（M3）、独立经历计数与成长资格（M4）。本批未改真实运行根 `companion-runtime`，全部验证在临时根完成。
+
+**M2 明确教导（MC04-T）交付记录（2026-10-27，工作树 `F:\game\projectNEKO\companion-memory`）**
+
+范围：用户单轮明确指令即可形成持久表达规则、下一次生成采用、重启后仍在、自动演化 off 时仍可用。Lead 与 teammate 并行：Lead 做 M1（事实层），teammate 做 M2，文件不重叠。
+
+交付：
+1. **新端点** `POST /v1/persona/teach`、`POST /v1/persona/teach/revoke`、`GET /v1/persona/teachings`。能力键 `persona_teach` 独立于 `host_persona` 与 `memory_tools`，默认 `false`，在 `stack_config.py` 校验与模板注释同步。
+2. **安全边界：客户端不能送规则文本**。请求只给 `source_key`；服务端从 journal（`core.source_recorded`）与 `recent.json` 读取已保存的用户原话，`_saved_user_message` 校验角色/主体/插件来源/内容分类，找不到 404。插件事件与其他主体的消息一律 403。
+3. **规则落进既有 `tone` 段**，不新建表达段（设计 §5：派生行不得成为第二事实源）。实测现网卡为 identity/interests/relationship/tone 四段，tone 即既有表达段。identity 保持冻结；无 tone 段时才 add 一段。
+4. **确定性派生，无模型调用**。`derive_teaching` 用规则表 + 意图判定：持久标记（以后/每次/总是）与临时标记（这次/这一轮）分流；身份请求（改名/自称）拒绝；撤销语（别学/开玩笑/当我没说）拒绝；无持久标记也无改法请求的评价（「这个 bot 挺好玩」）拒绝。实测 10 例全部符合 §8.1。
+5. **幂等与并发**：`teaching_id` 由（角色，主体，source_key）派生，重复提交返回 duplicate，不产生第二次 revision；CAS 失败 409 并附当前卡。
+6. **撤销**：按 `teaching_id` 或 `source_key` 撤回对应规则行，其它规则与用户手写的 tone 正文都保留。
+7. **发布**：只 `next_turn`；非该 target 显式 422 `invalid_target`（此前域层会静默改写 target，已补）。
+8. **tone 段溢出策略**：`MAX_SECTION_TEXT=4000`。超限时先淘汰最旧的、教学派生的行（status=superseded，正文与日志同时记）；淘汰后仍放不下就拒绝本次教导，返回 422 `tone_section_full`，**绝不删除用户手写的 tone 正文**。
+9. **`/v1/context` 增补 additive 字段 `expression`**：`{section_id, rules[], tone_revision, tone_version}`，只报告当前投影里仍存在的规则行，用户手改掉的规则不会被谎报为生效。
+10. **DSH 侧零改动**（修正了原设计）。规则进 tone 段后，tone 本就是 `render_projection` 的一部分，服务 `protocol.py` 的 `context.persona` 因此自动包含规则。`dsh-companion-memory/index.js` 的 `renderIncrement` 一行未改。原计划的「版本变化第一轮才渲染 [表达方式]」被否决：增量段的语义是本次新增材料，常驻规则塞进去会让 seen 指纹去重语义变味，且改动后的第二轮失去补救。
+11. **重启安全**：教学服务在 `MemoryService` 构造时（`core.recover()` 之前）建立并注册 journal replay handler，避免旧进程写入的 teach 事件在启动时变成未知事件类型而让整个 replay 暂停。
+
+验证：新增 `tests/test_mc04_teaching.py` **24 项**，覆盖能力授予/拒绝、CAS 冲突携带当前卡、幂等 duplicate、非 next_turn 拒绝、撤销只影响对应规则、重启后规则仍在、tone 溢出淘汰与拒绝、客户端不能送规则文本、跨主体/插件来源拒绝。定向回归 `test_b10_persona_card` 6/6、`test_b11_publish` 6/6、`test_s05_host_persona_state` 8/8。全量 discover **323 项，1 个既有 error**（`test_s05_evolution_display` 的导入问题，本轮未改动该文件），1 skipped。
+
+端到端实测（临时根）：导入卡（identity 冻结 + tone）→ 教导「以后别每次都总结，像朋友一样接着聊」→ 派生 1 条规则 → tone 追加规则行 → revision 1→2、发布 `33bc5b6c0a98` → 重建核心重启：`recover` paused=False、tone 与规则完全保持、published version 仍可用 → 撤销后 revision 3、tone 回到原样。
+
+**验收口径（2026-10-27 修订）**：M2 记为「核心接口、发布撤销、表达渲染完成」。**QQ 单轮教导体验不在本批验收**——DSH 侧没有教导入口（主会话 0 tools），且服务端 plugin 来源门禁未放开，两者都归 M6 接通后验收。
+
+未做：G04（学另一个 bot 的四段拆解，留 MC05）、G05 群聊权限矩阵（现有主体/scope 拦截已足够）。本批未改真实运行根 `companion-runtime`，全部验证在临时根完成。
+
+**QQ/DSH 教导链路：M2 交付时的接线缺口（历史，当前收尾见下文）**
+
+M2 交付时用户决定先完善记忆系统，再接 QQ。该阶段 QQ 尚无教导入口，plugin 来源也被拒绝；M6 已补咒语与服务权限合同，当前剩实际运行授权、安装及 QQ 渠道验收。
+
+已定位的两个阻塞（接通前必须解决，勿当成配置问题）：
+1. **插件来源被 403 拒**。`service/management.py` 的 `_saved_user_message` 写死 `if parsed.get("plugin_id") is not None: 403`，而 DSH 插件的 source_key 形如 `plugin:dsh-companion-memory:<char>:<subject>:<session>:<request>`（`memory-client.js` 的 `buildSourceKey`），解析后 `plugin_id` 非空 → 所有 QQ 消息 100% 被拒。M2 的一刀切门禁对「防别的插件冒充」是对的，但 QQ 是主人私聊，需要改为按身份 `subjects` + 受信插件白名单判定，而不是按 `plugin_id` 是否存在。
+2. **没有任何地方判断「哪条消息要学」**。teach 需要 `source_key`，而意图判断来自模型；DSH 侧没有对应工具。需要新增 `companion_teach` 工具（只传 `source_key`、绝不传规则文本），并在 `MEMORY_RULES` 补一句触发条件说明。
+
+接通时的权限决策待用户拍板（三选一或组合）：直接生效 / 先返回 pending 由下一轮确认 / 只对 `persistent` 且命中规则表的自动生效、兜底类走确认。建议 1+3 组合。
+
+另需注意：`/v1/turns` 的 `content_class` 缺省即 `chat`，落在 `TEACHABLE_CLASSES` 内，因此第一道阻塞解除后 QQ 消息在分类上就可用，无需额外改动。
+
+
+**M3—M6 工作包与前提（2026-10-27 立案，状态只在任务板与本台账维护）**
+
+M1（事实层）与 M2（MC04-T 明确教导）已交付验收。以下四张卡按依赖链串行：**M3 → M4 → M5 → M6**，共享任务板 task-2/3/4/5 已建并设 blocked_by。
+
+| 卡 | 主题 | 前置 | 核心交付 | 关键验收 |
+|---|---|---|---|---|
+| M3 ✅ 已交付 | 反思改造 | M2 | no_change 真正可用**且记录「这批已处理」**（复用 synth_backoff，无需新文件/回放）；合成输入带旧认识/反证/范围/已采用策略；七种局部操作；去重键换掉「事实 id 哈希」，主题键只归组、同主题允许多条并存；新增 `superseded` 与 `withdrawn` 严格分离 | G12/G13/G14 全部通过；连跑两轮第二轮模型调用 0；同主题两种认识并存且都可召回 |
+| M4 ✅ 已交付 | 成长证据改造 | **仅 M3（串行，不等 M5）** | 独立经历计数（按 episode 去重）；证据类型从 evidence_kind 推导；演化资格门槛（事实不得直接改卡）；统一 evidence DTO；删除/更正与新增同口径重算；旧格式兼容回退 | G09/G15/G16 全部通过；旧行升级不掉成熟度；全量 374 仅既有 1 error |
+| M5 ✅ 已交付 | 助手输出 + 三个工作摘要 + 未完话题 + 真实状态 | M4（串行） | `POST /v1/outputs`；三个**可重建**摘要；`companion_state` 接真实 StateService 快照（现为 `_EMPTY_STATE` 空占位）；episode 补参与者/结果/终态。**输出可见性**：待投递正文可持久用于补发，**只有送达部分**进已发生对话与默认召回 | 摘要删掉能重建、删来源同步失效；未送达不进 recent/召回；**G20/G21 不在本卡** |
+| M6 已交付 A/B 核心与消费代码；渠道待 MC07 | 主动交流（含待聊意图）+ DSH 消费端 + QQ 教导 | M4 + M5 | M6-A：候选、待聊意图、时机和回执核心；M6-B：五段渲染与 `<学到>` 咒语，主会话仍 0 tools | 合成核心、HTTP 门禁和 DSH 测试通过；QQ 实机教导与主动消息的运行链验收归 MC07 |
+
+**串行，无循环**：M4 不再等 M5。M4 先独占 `adapters/composition.py` 定好证据合同，M5 后续装配**必须保留**该合同，不得重写或绕过。
+
+**M6 的两个关键修正**：(1) 主动候选范围从「事项跟进」扩到「待聊意图」，否则只有任务感没有活人感；(2) QQ 教导**不注册新工具**——`README.md:93` 明确主会话输出空工具集、`tools.guard()` 拒绝工具调用，注册了模型也用不到，还会破坏隔离。改为在 `magic.js` 的 `SPELLS` 加一条内置记忆咒语（与翻本子/改写/撕掉同族），服务端仍只接受 source_key、规则由 `derive_teaching` 确定性派生。授权学习其他 bot 的表达方式走同一条快速路径，不等自主成长成熟。
+
+**验收归属**：M2 记为「核心接口、发布撤销、表达渲染完成」；**QQ 单轮教导体验等 M6 接通后验收**。G20（实际模型输入含片段）与 G21（真实 QQ 闭环）归 M6，M5 只保证服务侧数据与合同到位。
+
+**QQ 教导权限（2026-10-27 用户拍板）**：**直接生效**——明确教导经咒语提交后立即落 `tone` 段并按 `next_turn` 发布，不设 pending 确认。安全底线不变（客户端只传 `source_key`、规则由 `derive_teaching` 确定性派生、identity 冻结、tone 溢出拒绝）。`transient`「这次简短一点」仍不落盘。若日后改回确认制，改动点只在 `PersonaTeachingService.teach` 的发布步骤，不影响合同形状。
+
+**不在 456 范围内**：向量召回（MC02-B）。S06 基线 Recall@K 0.857、硬失败 0、唯一缺口 1 个同义表达，收益不足，等真实使用暴露问题再评估。
+
+**M5 之后仍需单独处理**：`/v1/receipts` 的输出分类扩展（采用 vs 实际送达），与 M5 的 outputs 合同一起收口更省事；多端范围与版本安装验收（MC07）留到最后。
+
+
+**M3 反思层改造交付记录（2026-10-27，工作树 `F:\game\projectNEKO\companion-memory`）**
+
+设计依据 §7 全节。三条硬缺陷全部修掉，另修了自己实现里的三个真 bug。
+
+1. **no_change 真正可用**。`_build_synthesis_prompt` 原结尾「没有稳定认识时也要给出最保守的一条」删除，改为显式列出七种操作并声明 no_change 是正常结果；`synthesize()` 的空结果不再判 `failed`。**已处理标记复用 `synth_backoff` 条目**（`nc`/`nc_at`，`n` 恒 0）：key 仍是未吸收事实全集哈希，新证据使 id 集合变化 → key 变 → 标记自然失效；来源删光 → key 不再命中。因此**不需要新状态文件、不需要新回放处理器、不需要删除失效逻辑**。这是本批最省的做法，理由写在 `_no_change_settled` 的 docstring 里。
+2. **合成输入扩展**。prompt 增加【已有认识】（id/status/support/reinforcement/disputation/scope/topic）与【已采用策略】两段；旧 prompt 只有事实列表，所以六种维护操作结构上不可能发生。
+3. **去重键换掉**。id 改为 `ref_<sha1(topic_key|scope_key|text_hash)[:16]>`；`topic` 只做**候选分组**，同主题允许多条不同认识并存（实测「喜欢拿铁」「喝咖啡胃疼」同 topic_key 并存且都被召回）；唯一性由 topic + scope + 受范围约束的语义匹配判定。`reflection_id_from_facts` 保留，只作 backoff key 与 split 清理。
+4. **新增 `superseded` 状态**（进 `REFLECTION_TERMINAL_STATUSES` 与 `REFLECTION_STATUSES`），与 `withdrawn` **严格分开**：`withdrawn` 只由删除/更正屏障写（语义未改），`superseded` 只由新证据写，带 `superseded_by` + `superseded_reason`（`superseded_by_new_evidence` / `contradicted_by_new_evidence`）。
+5. **split 每条 part 独立分配 `source_fact_ids`**，按 term overlap 把事实分给最匹配的 part，无可分事实的 part 直接跳过，不共用一份支持（否则 M4 按 episode 计数会算重）。
+
+新增字段（`refresh` 行）：`topic` / `topic_key` / `scope_key` / `applies_to` / `operation` / `supersedes` / `superseded_by` / `superseded_at` / `superseded_reason` / `previous_texts`。`SynthesisOutcome` 新增 `operation`（additive，默认 None，不参与调度）。新增 `reflection_id_from_topic` / `topic_key` / `scope_key` / `operation_of` / `REFLECTION_OPERATIONS` / `OPERATION_ALIASES`。未新增事件类型、未改 `journal` 白名单；`state_changed` 回放仅多传两个 payload 字段。
+
+**实现过程中修掉自己引入的三个真 bug**：(a) `_apply_new` 先退役再 `store.save(rows)` 会把退役写回滚掉；(b) 目标匹配拿**新措辞**跟旧行比相似度，而 supersede 本就是换说法，实测相似度 0.0 永远匹配不上 → 改为同 topic 只有一条时直接锁定、多条时按新证据文本排序、无 topic 命中才回落语义阈值 0.45；(c) 已 promoted 的认识不在可维护目标里，退役不了且人格卡派生条目残留 → 加 `_TARGET_STATUSES=(pending,confirmed,promoted)` 与 `_retract_persona_for_reflection`。
+
+验证：`tests/test_b05_reflection` **11 项全绿**（只调整断言口径，用例一个未删）；新增 `tests/test_m3_reflection_operations` **16 项全绿**（含「维护两轮第二轮 model_calls=0」「同主题两条并存且都可召回」）；全量 discover **342 项 = 基线 326 + 16**，唯一 error 仍是既有 `test_s05_evolution_display` 导入问题，1 skipped；十一段 demo 正常。
+
+Lead 独立复验（不依赖其自述）：G13 普通事实连跑两轮 → round1 `no_change/nothing_new`（调用 1 次）、round2 `already_settled`（累计仍 1 次，**delta 0**）、未写任何行；G12 红茶→乌龙 → 旧行 `superseded`、新行 `pending`、`supersedes` 指向旧 id，退役链路完整。
+
+前后对比（实测）：G13 before 是 `failed/empty_reflection` 且两轮都调模型、backoff n 涨到 2；G12 before 两行并存都 pending 都可见、旧认识**永不退役**；G14 before 两条并存、growth 为空、**反证零影响**。
+
+残余风险：① topic 由模型给出，模型频繁换主题词时归组会退化为语义阈值匹配（有兜底但不稳）；② 模型不输出 `operation` 时按 add 向后兼容处理，不会退役旧行；③ 已 promoted 行退役后人格条目是 invalidated 而非物理删除（符合既有 persona 语义）。
+
+未做（按分工，属 M4）：`_apply_support_removal` 仍是 `support_count = len(kept)` 按消息数重算，需在 M4 与新的按 episode 计数口径统一。
+
+**M4 成长证据改造交付记录（2026-10-27）**
+
+设计依据 §7.4 / §9.3。三个假象全部修掉，过程中由全量测试逼出三个真缺陷（都在本批新增代码里）。
+
+1. **独立经历计数**。新增 `domain/growth_evidence.py`（纯函数、无 IO/无时钟）。`support_count` = 独立经历数而非 `source_event_keys` 数量。退化规则文档化：有 `episode_id` 时一个 episode 恒算一份（M1 合并的跨 episode 键不额外计数）；无 episode 时按 key 退化（两次独立提及算两份）；都无时按 fact id 兜底；`agent_expression` / `quoted_example` 完全不计数（对齐 §7.4）。
+2. **证据类型从真实来源推导**。`EVIDENCE_KIND_FLAGS`：user_assertion→无旗标、explicit_feedback→user_feedback、observed_action/tool_result→actual_result+real_contact、agent_expression/quoted_example→无。删掉写死 `actual_result` 那段，`PROMOTION_RULES` 不再自我绕过。
+3. **删除重算与新增同口径**（用户点名项）。`recompute_support_after_removal` / `apply_support_removal_to_row` 一处实现，growth reconcile 与 deletion cleaner 共用；withdrawn/narrowed 语义保留。`drop_fact_ids` 区分两路径：删除移除 `source_fact_ids`，更正**只重算支持与旗标、保留 provenance**。
+4. **演化资格门槛**。`eligibility_of_row` 两条路都走 basis 校验：growth item 需 `promotion_ready`（经历数≥门槛且有对应旗标）；裸反思需 `reflection_ready`（basis 非空且经历数≥`evidence_min_support`）。事实一律 `fact_not_eligible`，只作解释依据。
+5. **统一 evidence DTO**，`composition._evolution_evidence` 重写为同一形状；修复证据过滤器在 `wanted` 命中时丢掉调用方点名事实的问题。
+
+**本批由全量测试逼出的三个真缺陷**（都不是断言口径问题）：
+a. **旧库兼容事故**：`support_basis_from_row` 对无 `support_basis` 的历史行返回空 → 升级后所有既有认识会静默掉成 not_mature。修法：旧格式回退（`support_basis` → `support_event_keys`/`source_event_keys` → `source_fact_ids` → 0），旗标只继承该行已声明的，绝不凭空补 actual_result；新建行必写 `support_basis`。
+b. **seed 未适配**：`webui/seed.py` 演示数据无 `support_basis` → 提案被拦 → `build_app` 崩溃，连带 22 个 console/model-config 测试 setUp 失败。修法：补 `support_basis` 并加一条两经历的成熟依据。
+c. **更正撤回失败**：`ReflectionInvalidator` 先删 `source_fact_ids`，而 persona invalidator 靠该字段做映射 → 派生人格条目没被撤回（事实更正了但人格卡还留着）。修法：更正路径 `drop_fact_ids=False`。
+
+测试适配（均为新行为正确期望）：b05 growth fixture 补 `evidence_kind=observed_action`（裸 user_observation 本就不该开 habit 门）；b12/c03/b13/s05_service_closeout 的 prepare 补两经历成熟认识（事实池现被 `fact_not_eligible` 拦，正是新行为）。
+
+验证：新增 `tests/test_m4_growth_evidence.py` **32 项**；全量 discover **374 项**（基线 342 + 32），errors=1 为既有 `test_s05_evolution_display`，1 skipped。
+
+Lead 独立复验：eligibility 矩阵（confirmed+空 basis→not_mature、+1 key→not_mature、+2 keys→eligible、pending+2→not_mature、fact→fact_not_eligible）；旧行兼容（重建 2 份 basis 且不凭空加旗标）；`drop_fact_ids` 两路径（删除→facts `['f2']`，更正→仍 `['f1','f2']`）。
+
+前后对比：改造前一次交心 5 句话即达「两份独立经历」并开晋升门（因所有来源一律 actual_result）；改造后同 episode 恒 1 份支持、裸陈述不带旗标，必须真有结果或反馈才成熟。
+
+**M4 遗留项（需后续决策，勿静默处理）**
+
+1. **旧行旗标不可信但被保留**：M4 不回填、不回溯修正旧行的 `evidence_kind`/旗标，只在读时忠实继承行内**已声明**的值。后果是：M1 之前由 `ai_disclosure` 却写死成 `actual_result` 的旧行，仍可能通过 habit 门。彻底干净需要一次性迁移重算旧行 `evidence_kind`——那是**改写历史证据**，应单独决策、单独备份、显式执行，不塞进任何批次静默做。记为独立后续项。
+
+2. **裸反思资格已定案并实施（2026-10-27 收尾）**：confirmed / promoted、有至少两份独立经历，且至少有 user_feedback / actual_result / both_party / real_contact 中一类真实依据。纯陈述反思继续用于理解与召回，不自动改卡；真实用户反馈无需工具结果即可满足条件。明确教导仍单次生效。删除最后一份交互依据后，即使还剩两份陈述经历也失去资格。
+
+3. **`evidence_min_support` 默认 2**：与 `PROMOTION_RULES` 每类 min_support 一致（host 写死 2），是「可试用」的最低线；可配 1..8，设为 1 等于退回「一次就成熟」。它和 reflection 的 `growth_min_support` 是两个独立设置但**默认值必须同步**，composition 里已让 provider 与 gate 读同一个值避免漂移。
+
+4. **`_apply_eligibility` 优先信任 provider 的 DTO**：注入自定义 `evidence_provider` 的调用方必须给出可信 DTO，否则资格判定会信任它。目前只有 composition 一个 provider，风险可控，已写进 docstring 作为隐式合同。
+
+
+**M5 助手输出、三个工作摘要、未完话题与真实状态交付记录（2026-10-27，工作树 `F:/game/projectNEKO/companion-memory`）**
+
+范围：补齐设计 §5 的「助手表达」对象、§10.1 的「当前工作摘要」层、§11.1 的经历投影与 §11.2 的未完话题；`companion_state` 从空占位换成真实快照。四条链共用一条原则：**能从权威记录重建的才落成对象，抽不出来的一律做投影**。
+
+1. **`POST /v1/outputs`（正文 + 因果来源 + 送达回执）**。新增 `persistence/outputs.py`（`outputs.json` 版本化表）与 `domain/outputs.py`（`OutputService`），journal 事件 `core.output_recorded`。分类固定 `companion_output`，属 plugin-only 类，不进事实提炼、不增加用户偏好支持。可见性语义按设计 §12.3 落实：
+   - **正文在生成时即落盘**（status=pending），使进程重启后能补发；`GET /v1/outputs?pending=1` 返回仍未送达的片段（含序号与文本），「只补未送达部分」有服务端依据。
+   - **只有送达片段进入已发生对话**。`POST /v1/outputs/deliver` 按片段序号回执，写入 `recent.json` 的只有被回执点名的片段；未送达正文不进 recent、不参与默认召回。
+   - **回执按片段序号幂等**：同序号重复上报是 duplicate（不写第二行、不重复计字符）；同序号不同长度是 409 `part_chars_mismatch`；越界序号拒绝。这就是「只重试失败片段」能安全重放的原因。
+   - **`interrupted` 与 M2 同义**：保留正文、记录可重试、**recent 增量为 0**——中断的生成从未送达，不是双方共同经历。
+   - 删除来源时 `_OutputCleaner` 清正文留 id（status=invalidated），与 M1 的删除屏障同口径。
+   - 新增第 4 个客户端能力 `memory_outputs`（默认 false，独立于 host_persona / memory_tools / persona_teach）。
+
+2. **三个可重建工作摘要**。新增 `domain/working_summary.py`（`WorkingSummaryService`，纯投影）与 `persistence/working_summary.py`（审计缓存）。
+   - 成长与关系：已发布教导规则（且必须在当前投影里仍存在）+ growth/reflection 行 + 关系节点。
+   - 重要事实：当前有效事实投影 + 主体/场景过滤 + 重要度排序。
+   - 未完话题：`companion_state` 的 open/waiting 事项，带下一步、等待时长与提问禁制标记。
+   - **读路径永远实时投影，不读缓存**：删除来源后摘要当轮就消失，不存在「删了还复活」。落盘的 `working_summary.json` 只作审计（`rebuild_key` + `invalidated_at`），由 maintenance 的 `working_summary` 步骤刷新、由删除 fan-out 的 cache invalidator 置失效；测试证明删掉该文件后 sections 与 rebuild_key 完全一致。
+   - `rebuild_key` 覆盖全部输入版本：删除版本、更正版本、事实数量+最新确认时间、反思数量+更新时间、state 版本+更新时间、规则数+card revision、persona 条目、directives 数量。
+
+3. **接真实 state**。`build_turn_context` 拆为外层包装 + `_turn_context_core`：一次 `StateService.read` 得到快照，**同一版本**既渲染 block 又回填 `companion_state`（避免两次读取之间提交造成 payload 说谎）；`open_threads` 未由调用方传入时从该快照的 open/waiting 事项派生（此前该参数没人传）。
+
+4. **未完话题续接（G18 核心）**。新增 `followup` 解析：只在**指代/续接标记**出现时解析，解析到唯一事项才算 `resolved`；多候选同等合理时返回 `ambiguous` + `clarify_basis`（每条候选带 `thread_id` 与区分依据）。续接真正落地还要求命中对应经历，因此 recall 增加 `retrieval_mode="episode"` 分支：用解析出的经历的 episode 作为锚点选行。**新话题不继承旧事项**（「今天天气不错」仍为 miss），这是设计 §10.4 的明确要求。
+
+5. **episode 投影补全**。参与者（master/assistant，由证据类型推出）、双方行为、实际结果（`observed_action` / `tool_result` / `explicit_feedback`）、终态（由 state 事项经证据键派生）、后续时间、禁提设置（来自该主体的生效 directives）。**不改 `extraction.py`**：这些字段本就是随后续轮次逐步形成的，抽取时刻的快照只能记录当时看到的，写法上必然成为第二事实源。
+
+6. **`/v1/context` 扩层（additive）**。新增 `working_summary` / `state` / `state_version` / `episode` / `threads_source`，既有字段（`context` / `memory_ids` / `persona_*` / `corrections` / `recent_turns` / `basis` 等）形状完全不变，`context` 子块仍是 B06 那份。
+
+验证：新增 `tests/test_m5_outputs_summaries.py` **29 项**（输出可见性 7：未送达不落 recent/可恢复补发/分段幂等/部分送达只补缺失/中断不写/已送达才可见/删除源失效；工作摘要 6：权威派生/删除同步失效/删缓存重建/删缓存不改答案/维护写审计行/删除标失效；G18 续接 4：解析/多候选澄清依据/新话题不误接/跨 session 重启续接；真实 state 3；episode 3；`/v1/context` 扩层 1；HTTP 层 5：能力门禁/记录与送达/未知输出 404/中断/摘要路由）。定向 `test_b06_recall + test_b07_state + test_b05_reflection + test_m3_reflection_operations + test_m4_growth_evidence + test_m5` 共 **104 项全绿**。全量 `unittest discover` **403 项 = 基线 374 + 29**，唯一 error 仍是既有 `test_s05_evolution_display` 的 `tests.test_b12_evolution` 导入问题（未触碰该文件），1 skipped。
+
+**前后对比（同一段对话：事实「用户明天要去面试」（episode 1027）+「用户喜欢乌龙茶」+ 一条 habit 反思 + 一条 state 进展「帮主人准备面试」，用户说「那个后来怎么样了？」）**
+
+| | 改造前（M4 基线） | 改造后（M5） |
+|---|---|---|
+| `result` | `miss` | `matched` |
+| `retrieval_mode` | `bm25` | `episode` |
+| `memory_ids` | `[]` | `["fact_interview"]` |
+| `context` | `""` | `1. [事实/-] 用户明天要去面试 (2026-10-28, 当下)` |
+| `query_meta.used_thread` | `false` | `true`（`thread_from_followup`） |
+| `companion_state` | `{"block":"","version":0,"items":[]}` 恒为空占位 | `version=1`、`block="进展：帮主人准备面试"`、items 含 source_event_ids |
+| `threads_source` | 不存在（参数靠调用方，没人传） | `companion_state` |
+| `followup` | 不存在 | `resolved` → 「帮主人准备面试」 |
+| `working_summary` | 不存在 | 相处与成长 / 重要事实 2 条 / 未完话题 1 条（附 rebuild_key） |
+| `episode_summary` | 不存在 | `episode_id=ep:host:interview:1027`、`participants=[master]`、`state=waiting` |
+
+新话题对照：同一状态下说「今天天气不错」→ `result=miss`、`memory_ids=[]`、`followup=not_continuation`，旧事项不被拉回。
+
+**M5 遗留项（需后续决策，勿静默处理）**
+
+1. **`/v1/receipts` 的输出分类扩展未做**：设计 §12.2 列了「输出采用 vs 实际送达」的区分。本批把送达事实放进 outputs 自己的回执（按片段序号），既有 `/v1/receipts` 的 `used/sent/delivered` 语义一行未动，两套口径并存。合并它们要改 DSH/QQ 侧消费，故留给 M6 或独立批次。
+2. **多片段正文的片段边界由服务端决定**：客户端必须引用服务端返回的序号与字符数；若某渠道自己的分段边界不同，需在 create 时用 `part_sizes` 显式声明，否则按 400 字符并在句末回退切分。这是合同选择，不是缺陷，但 M6 接入真实渠道时要核对。
+3. **episode 的 `assistant_behaviour` 依赖 `agent_expression` 证据**：目前只从事实行的 `evidence_kind` 推导。她的输出正文本身已单独存进 outputs，但**尚未**作为证据回流到 episode（那需要先决定「她的自述是否算一次经历」——按 §7.4 自己不应给自己加支持，所以本批刻意不接）。记为独立后续项。
+4. **摘要的多语言文案**只覆盖 zh/en 两套标签；其它语言回退 zh。语料扩展留待需要时再补。
+5. **审计缓存的保留策略**：`working_summary.json` 按主体保留一行，删除来源只标失效不删行（便于排障）。每角色每主体恒定一行，不随时间增长；若将来主体数量成为问题再补保留策略。
+
+
+**M5 助手输出 + 三个工作摘要 + 未完话题 + 真实状态交付记录（2026-10-27）**
+
+设计依据 §5 / §10.1 / §11.1–11.2 / §12.2。核心侧完成，渠道验收（G20/G21、DSH 渲染、真实 QQ）归 M6。
+
+1. **`POST /v1/outputs`**（新 `persistence/outputs.py` + `domain/outputs.py`）。助手正文独立存档，`kind` ∈ proactive / task_feedback / reply / notice，`content_class=companion_output`（不进事实提炼、不增用户偏好支持）。
+   **可见性语义（用户特别强调，已精确实现）**：`create` 落全文 `status=pending`、**不写 recent**；`deliver` 按**片段序号**上报，只有实际送达片段进 recent，幂等（同 index 重报 → duplicate 不重复写、不重复计 chars；同 index 不同 chars → 409 `part_chars_mismatch`；越界 → 拒绝）；`interrupt`/`failed` 保留正文可补发但**不写 recent**。送达写走 `journal.record_and_save`，replay 幂等补 recent（覆盖崩溃窗口）。
+2. **三个可重建工作摘要**（新 `domain/working_summary.py` + `persistence/working_summary.py`）：成长与关系（已发布 teaching 规则 + growth/reflection + 关系节点）、重要事实（当前有效事实投影 + 范围过滤）、未完话题（state 的 open/waiting）。
+   **关键取舍**：召回/上下文路径**永远从权威记录实时投影、不读缓存**；落盘的 `working_summary.json` 只作审计缓存（`rebuild_key` + `invalidated_at`），由 maintenance 刷新、由删除/更正 invalidator 置失效。这样「删掉缓存功能不变」有实证，且摘要永不成为第二事实源。`rebuild_key` 输入含 deletion/correction 版本、facts 数量+时间戳、reflections、state 版本、规则数+card revision、persona、directives。
+3. **接真实 state**。`build_turn_context` 拆为 wrapper + `_turn_context_core`，一次性读 StateService 快照，**同一版本**既渲染 block 又回 `companion_state`（替掉恒空的 `_EMPTY_STATE`）；`open_threads` 未由调用方传入时从 state 的 open/waiting 派生（G18 续接来源）。新增 `followup` 解析（多候选给澄清依据）。
+4. **episode 视图**。**未改 `extraction.py`**（尊重 M1 归属），新增 `domain/episode.py` 从 facts + recent + state + directives 派生参与者/双方行为/实际结果/终态/后续时间/禁提设置。派生而非落字段，符合「可重建」要求——`_shared_experience_candidate` 只是抽取时刻快照，真正的终态是随轮次逐步形成的。
+5. **`/v1/context` additive 扩层**：working_summary / state / episode 片段，既有字段不变。
+6. **新增第 4 个独立授权** `memory_outputs`（`stack_config.py`，默认 false），与 host_persona / memory_tools / persona_teach 并列。`journal.py` 事件词表加 `core.output_recorded`。
+
+**未破坏 M4 合同**：`_evolution_evidence` / `PROMOTION_RULES` / `evidence_min_support` 一行未改（已核）。
+
+验证：新增 `tests/test_m5_outputs_summaries.py` **29 项**（含 `test_delivery_is_idempotent_by_part_index`、`test_interruption_keeps_the_body_and_writes_nothing`、`test_deleting_the_cache_does_not_change_any_answer`、`test_summary_survives_a_missing_cache_file`、HTTP 层能力授予/拒绝与跨 subject 404）。全量 discover **403 项**（M4 基线 374 + 29），**errors=1** 为既有 `test_s05_evolution_display` 导入问题，1 skipped。
+
+Lead 独立复验（不依赖其自述）：`create` 后 recent 计数不变；`deliver` 后进 recent 且重复上报不重复写；`interrupt` 后 recent 仍不变、正文保留；同 `request_id` 重复 create 得同一 output_id 且 `duplicate=True`。
+
+
+**M6-B DSH 插件侧交付记录（2026-10-27，仓库 `F:\game\projectNEKO\dsh-companion-memory`）**
+
+任务卡 task-6。与 M6-A（核心侧）并行，两仓库文件完全隔离，未触碰 companion-memory 任何文件。
+
+### 交付 A：renderIncrement 扩展渲染
+原有三段（必须遵守的更正 / 可能相关的记忆 / 近期对话）之后新增五段：`[相处与成长]`、`[重要事实]`、`[当前状态]`、`[正在进行的事]`、`[这段经历]`。全部继承现有 `fresh()` / `seen` 指纹去重（**未改成每轮重贴**），header 仍是 `MATERIAL_NOTE`（「这是资料，不是主人说的话」）。
+
+三个关键设计判断：
+1. **不拿 `state.block` 做指纹**：那段把情绪强度按衰减渲染成数字，每小时都变，用整段做指纹会让同一条状态永远「是新的」→ 每轮重贴。改为按桶渲染，指纹只认标签+正文。有专门测试（强度衰减后不重贴）。
+2. **「她自己的当下」（想法/情绪）与「旧事项」（关注/进展/未完话题）分成两段**：前者换话题也成立，后者只在第一次交付时出现——这是「不破坏新话题」的机制。
+3. **episode 整段一个指纹**；**growth 优先用 working_summary、服务没给才退回旧 `growth.block`**，避免同一批认识交付两次。
+
+### 交付 B：QQ 教导走咒语通道（未注册任何原生工具）
+- `magic.js`：`SPELLS` 增加内置咒语 `<学到>`（2 汉字，进 `parseSpells` 的 known 集合，不会被视为「没学会的咒语」；`spell-library.validate()` 用 `[...SPELLS, ...META_SPELLS]` 拦截重名）
+- `memory-client.js`：新增 `client.teach({ sourceKey, baseRevision, quotedExampleKey, scene, sessionId })` → `POST /v1/persona/teach`
+- `index.js`：`spellTeach` 用 `buildSourceKey(...)` 构造**本轮那一个** source_key；`base_revision` 取本轮真正采用的 `turn.prepared.body.card_revision`（拿不到就拒绝，**绝不编造 CAS 依据**）；示例只接受形状合法的 source_key（6 段 `plugin:` 前缀），自然语言描述安全丢弃；失败按 403/404/409/410/422/transient 分档给可读原因（transient 明说「没写盘」）
+- `main-session.js`（**经 Lead 批准**）：`BASE_MAGIC_RULES` 补 `6. 学到`，原 6/7 顺延为 `7. 学咒语` / `8. 忘掉咒语`，说明文字原样保留。**只改魔法段正文**——组装钩子、`tools: []`、`suppressRuntimeContext`、working-directory 覆盖、`THINKING_VOICE` 位置一个字未碰
+- `MEMORY_RULES` 补触发条件（现 237 字，仍在 `RULES_CHAR_LIMIT=300` 内）
+
+**`main-session.js` 这处改动是必须的**：主会话 0 tools、系统提示只有人格段+魔法段，不写进魔法清单则模型根本不知道有这个咒语——解析器认得但没人会念，功能实际不可达。魔法段长度 442 → 495 字符（+12%），已确认该段无字符上限约束。
+
+### 验证
+- `npm test` **80/80**（基线 57 + 交付 A 10 + 交付 B 13）；`npm run check` 11 个源文件全过
+- **G20 走真实 `runtime.preStep`**，断言**最终 messages** 里那条 `source.kind=companion-memory` 的正文真含 `[相处与成长]`/`[当前状态]`/`[这段经历]` 片段，而非只断言 renderIncrement 输出；另一项断言无新增时 messages 长度不增加、不留占位句
+- **主会话 0 tools 用真实 `MainSessionScope.shapeAssembly` 复核**：`tools reported = []`、`contexts: []`、sections 仅 `deployment:persona-prefix` + `companion-memory:magic`、magic 含「学到」
+- **请求体断言用真 `MemoryClient` 配假 fetch**（断的是真会发出去的字节流）：`Object.keys(body).sort()` 恰为 6 个键，序列化后不含用户原话、不含规则文本、无 `rules` 字段
+
+顺带修的质量问题：召回结果与摘要投影天然重叠（「用户喜欢红茶」两处各贴一次），已加互相包含判重，摘要段让位给召回调（召回才是本轮针对性结果）。
+
+**遗留风险**：① 端到端未验——M6-A 的 plugin 门禁未落地，当前传 `plugin:` 前缀会被服务端 403 拒；② `base_revision` 依赖人格卡已建立（revision>0），新建根首次教导需先在管理台建卡；③ 示例来源只认完整 source_key 形状，模型写自然语言会被安全丢弃。
+**M6-A 核心侧交付记录（2026-10-27）**
+
+任务卡 task-5。与 M6-B（DSH 侧）并行，两仓库文件隔离。
+
+### A. 主动交流（含待聊意图队列）
+新增 `persistence/proactive.py` + `domain/proactive.py`（ProactiveService / ProactiveSettings），journal 事件 `core.proactive_candidate`；composition 增 `proactive` / `proactive_store` 字段、`proactive_settings` 参数、`_ProactiveCleaner`。
+
+1. **无来源即拒**：`enqueue` 无 `source_keys`/`fact_ids`/`reflection_ids`/`thread_id`/`episode_id` → `no_source`。
+2. **五类缘由**：thread_due / agreement / task_result / interest_news / shared_finding。其中 **agreement 与 task_result 只能由运行时声明**（服务不从文本猜「约好了」），其余三类从 state / reflection / growth 派生，同源重复派生为 duplicate。
+3. **成熟度按来源分流**：explicit_agreement / task_result 直接成候选；autonomous_inference 走 M4 的 `eligibility_of_row`（裸事实 `fact_not_eligible`、单来源反思 `not_mature`、成熟反思放行）。
+4. **四操作**：postpone / rewrite / merge / cancel（merge 让存活者继承两边来源，删任一边都能命中实际发出的那条）。
+5. **发送前重检**：`recheck()` 与 `dispatch()` 共用判定，`send()` 默认自己再判一次（静默时间绕不过去）。四类结果：同题被谈 → absorbed（G25）；换题 → defer `topic_changed`；来源删除/话题暂停/禁提/事项关闭 → refused。
+6. **双重时间冷却**（Lead 追加要求）：除「刚发言 30 分钟」外，新增 `topic_cooldown_minutes=360`——用户上一轮提过该题、这一轮沉默也不会重复发。360 分钟短于 `thread_followup_min_hours=12`，所以不会挡住合法跟进。为此 `ProactiveStore` 增有界 utterance 记录（32 条，只存文本/时间/subject/request_id 用于匹配，不复读为正文）。明确约定豁免（用户提过恰是约好的理由）。
+7. **时机**：每日 2 次 / 间隔 90 分钟 / 本地 00:00-09:00 静默，约定提醒豁免。跨日边界显式测了默认窗口与 wrap 窗口（23:00-07:00）共 8 个时间点。
+8. **发送-保存-回执**：`send` 只创建 M5 output（pending，不写 recent），`deliver` 委托 OutputService。G22 实测：3 段长文只报 index 0 → `partial`、`resumable()` 返回缺失段、补发只报缺失 → `delivered`、重复上报 duplicate 且 recent 计数不变。
+9. **G26 三件分离**：「先不聊」= 话题暂停（到期自动失效，不产生删除记录）；「别再提」= 真实 directive（recall 共用同一份）；「忘掉」= 真删除，清理器把候选置 invalidated 并清正文。
+
+### B. 服务端 plugin 门禁改造（QQ 教导前提）
+`_saved_user_message` 拆为：角色校验（在分流之前，两条路都覆盖）→ host 来源走原分支（subject 判定与 200/403/404 三态**一字未改**）→ plugin 来源走新增 `_require_trusted_plugin_source`。
+四条 **AND**：`persona_teach` 能力 → subject ∈ 该身份 subjects → character == 服务角色 → `plugin_id` ∈ 该身份 `trusted_plugins`。
+**`trusted_plugins` 挂在 client 上、默认空**（模板 `trusted_plugins = []`），升级本身不放开权限。新增 `scope_subject` 参数用于校验 payload.subject 与 source_key.subject 一致（只在 plugin 分支，避免破坏 host 语义）。
+
+### C. outputs / receipts 收口
+`/v1/receipts` 加 additive `output_id` 参数与只读 `GET /v1/receipts/summary?request_id=`，把「采用（persona_version + adoption_status）」与「实际送达（sent_chars / delivered_chars / complete / transport_parts）」分开回答，并给出该 request 的 output 片段进度。既有 `used/sent/delivered` 语义**逐字段断言未变**（含 sent 的 transport/sent_chars/parts、delivered 的 delivered_chars），未命名 output 时回复不含 `output_id` 键。
+
+### 过程中修掉的三个真缺陷
+1. **派生候选的来源不可删**：state 事项只记本地 id（`e_interview`），删除记录用全键（`host:rin:private:e_interview`）→ 派生候选带着删不掉的来源。修法：通过 facts 建立 local-id → 全键/归属 episode 索引，派生时写全键（顺带补上 `episode_id`）。与 M4 的「更正撤回失败」是同一族问题：同实体跨层 id 表示不一致导致静默失效。
+2. **M5 cause 归一化丢字段**：`persistence/outputs.py` 的 cause 白名单丢弃未列出键，M6 加 `candidate_id` / `thread_id` 时暴露。按 additive 加入，既有 5 键语义与顺序不变。
+3. **subject 一致性检查放错位置**：最初放在 host/plugin 共用位置，`test_mc04_teaching` 的 host 用例立刻挂（错误码变 `scope_mismatch`）。修正为只在 plugin 分支。
+
+验证：新增 `tests/test_m6_proactive.py` **40 项** + `tests/test_m6_server_gate.py` **17 项**。全量 discover **460 项**（M5 基线 403 + 57），**errors=1** 为既有 `test_s05_evolution_display` 导入问题，1 skipped。
+
+**Lead 独立复验**：
+- 门禁四态矩阵实测：`teach=yes trusted=yes → ALLOWED`；`teach=yes trusted=no → forbidden(not trusted)`；**`teach=no trusted=yes → forbidden(no capability)`**（配了白名单但没能力位仍拒绝，无越权）；`teach=yes wrong subject → scope_mismatch`。
+- **真实端到端打通**：用 `plugin:dsh-companion-memory:companion:private:dsh-abc:req-001` 作为 source_key，经 `ingest_turn` 存档 → `derive_teaching` 派生 1 条规则 → `teach` 返回 `applied`、revision 1→2、tone 段正确追加规则行。**这是 QQ 教导链路首次真实打通**（M2 时因门禁被 403 全程阻断）。
+
+
+
+**M6 遗留项（需后续决策，勿静默处理）**
+
+1. **跟进间隔定案：保留 `thread_followup_min_hours=12`**。这是普通事项产生候选的起点；实际打扰还取决于候选质量、近期交流、事项终态和提及限制。保持现有时机规则，不新增发送门禁。出现具体打扰样本后先核对来源与内容，再决定是否调为 24—48 小时。
+2. **每日 2 次 / 90 分钟在真实使用中几乎碰不到**：一天攒够 2 条有真实缘由的候选本身就少见，真正会打扰的是一次低质量候选而不是十次高质量候选。**不建议动这两个参数。** 90 分钟防的是两条同时到期连发；若真遇到两条都急，应改「同类合并优先」而不是缩短间隔。约定提醒有豁免，不会漏掉重要提醒。
+3. **`agreement` / `task_result` 依赖调用方诚实**（信任边界，非缺陷）：服务只校验「有真实来源引用」+「来源未删」，无法验证「两人确实约好了」。QQ/DSH 必须只在真实发生时调用。
+4. **时区只有固定偏移**：本机无 tzdata，`user_utc_offset_minutes` 无法表达 DST，DST 地区换季前后静默窗偏一小时。docstring 已标为**当前限制**而非设计选择。
+5. **`dispatch` 一次只处理一条**：多条同时到期无批量合并策略，等真实投递数据再定。
+6. **同题冷却用最长公共子串 ≥2**：不是向量也不是关键词表，误判成本不对称（误合=多一句自然衔接，误分=重复问），故偏保守。
+7. **冷却/日上限是全局单组参数**：多用户需下沉到 (角色, 主体) 维度。
+8. **QQ 教导的日常实例仍需显式授权**：`stack.toml` 同时配置 `persona_teach = true` 与匹配来源标识的 `trusted_plugins`。插件默认 `pluginId=dsh_memory`，因此默认配置应为 `trusted_plugins = ["dsh_memory"]`；自定义时以 source_key 第二段为准。两项授权缺一即 403，升级包本身不改变运行授权。
+
+**M4 遗留修复：`python -m companion_memory` 第 11 段 demo 崩溃（Lead 收口）**
+
+M6-A 收尾时发现仓库自带十一段 demo 在第 11 段 `persona_admin_demo` 崩溃（`evolution_service.get()` 返回 None）。它用四条证据排除自身责任：① 纯 HEAD 源码（git archive）同样崩；② 崩点前 `second.status` 为 `rejected/base_revision_conflict`，根因是 `p1` 被判 `rejected/fact_not_eligible`、`accepted.revision_after=0`；③ 直接调 `eligibility_of_row`，demo 的 `fact_tone` 是裸陈述（`user_assertion`），M4 按 §9.3 判 `(False, not_mature)`——**这正是 M4 的预期行为**；④ 临时副本里只把 `_apply_eligibility` 改成直通，demo 立刻跑通。
+
+结论：**M4 让 demo 的裸事实不再具备演化资格，但 demo 没跟着适配**，且 460 项测试无一覆盖这段 demo（都直接调 service），所以整条 demo 链路的崩溃没人发现。Lead 直接收口：
+- `__main__.py` 新增 `_demo_understanding(fact_id)` helper，产出一条两独立经历（`support_basis` 带两个 episode、`explicit_feedback` 旗标）、`status=confirmed` 的成熟认识 `ref_tone`
+- `persona_evolution_demo` 与 `persona_admin_demo` 的种子数据补该认识，`source_refs` 从 `["fact_tone"]` 改为 `["ref_tone", "fact_tone"]`——**认识作资格依据、事实仍作解释来源**，正是 G15 的语义
+
+修复后：十一段 demo 全部正常输出；全量 discover **460 项 / errors=1（既有导入问题）/ 1 skipped**，与修复前一致（demo 未被任何测试覆盖，此修复不改变测试数字）。
+
+**教训**：demo 与测试是两条独立链路，测试全绿不代表 demo 能跑。M4 那轮跑了四次全量都没发现，是因为全量只跑 `tests/`。**后续改动 `__main__.py` 所依赖的语义时，要额外跑一次 `python -m companion_memory`。**
+
+**本机交付收尾与后续顺序（2026-10-27）**
+
+两项决策已落实：普通事项跟进间隔保持 12 小时，保留已有时机规则、不追加发送门禁；裸反思改卡需至少两次独立经历与一类真实交互依据，用户反馈可满足，无需强求工具结果。明确教导仍单次采用。
+
+本次补 3 项独立风险回归：纯陈述反思拒绝改卡、反馈可在无 actual_result 时取得资格、删除最后一份交互依据后资格撤销。修复 `test_s05_evolution_display` 在 discover / 包模块两种加载方式下的导入，并让其历史对比样本使用合格反思。最终核心 **466 项，0 失败、0 错误、1 skipped**；DSH **80/80**，JS 语法检查通过。新增回归 3 项，原来无法加载的显示测试恢复 4 项，替代旧错误占位后总数为 466。
+
+本机构建产物：核心 `0.1.0.dev5` wheel/sdist，DSH `0.2.4` tgz。wheel 在仓库外临时 venv 独立安装，确认导入来自 site-packages，11 段 demo 全部运行通过；包文件检查无运行根、备份与开发依赖。正式人格卡、运行根与部署进程保持原状态。
+
+**MC07 本机接线（2026-10-28）**：已补齐两条链路。普通对话复用一次提炼调用返回 facts + state_updates，由程序绑定主体、场景、原始时间与证据键，支持事项建立/更新/结案与明确回访时间。主动交流新增受 `memory_outputs` 限制的 poll/use/observe/complete/check/release 接口，租约绑定身份与会话；DSH 定时消费、同人格固定快照生成、插话撤回、QQ 稳定 output ID 分段投递与重启补发已接通，送达回执才写近期。主请求继续完全省略 tools。
+
+本次新增核心 3 项、DSH 2 项、bridge 1 项测试，分别覆盖事项生命周期/范围、租约与插话、HTTP 权限与丢响应重放、部分回执与恢复、生成中撤回、桥接持久分段与发送前复查。核心相关组合 **110/110**、DSH **82/82**、bridge 投递 **8/8**；bridge 构建通过。使用 DSH 保存的官方 Key、`deepseek-flash` 和桌面包内真实 rc.3 SDK，在临时数据根跑通面试约定→提炼与事项→到期候选→0 tools/开启思考的真实生成→模拟 QQ 首次失败/客户端重开/同正文补发→回执入近期→用户报喜结案。QQ 传输使用模拟发送器；本轮在本机源码工作，服务器与在线 profile 未更新。任务反馈正文独立 outputs 接入和 QQ 跨天使用观察仍按 MC07 接续。
+
+**后续体验阶段：本轮不实施，先完成 MC07 与跨天实际使用。**
+
+| 方向 | 复用入口与完成重点 | 状态 |
+|---|---|---|
+| 1. 教导理解与规则整理 | O02；复杂条件、授权示例、规则替换与收窄，减少重复和冲突；服务端仍验证来源和改卡范围 | 未开始 |
+| 2. 持续兴趣与小目标 | O02 / X05；保存自选兴趣、项目进度、实际成果和放弃原因，从持续选择形成偏好 | 未开始 |
+| 3. 当前相处行为选择 | O01 / O03；按具体情境选择倾听、建议、短回复或接梗，沿用现有生成前流程 | 未开始 |
+| 4. 可见养成与纠错 | O05；管理台展示已学规则、共同经历、变化依据与主动原因，并支持纠正和撤回 | 未开始 |
+| 自主发展与服务器活动 | X05；专属服务器执行自选项目、产出作品与技能，实际经历经核心回写、值得分享的成果进入待聊队列；框架继续本机开发与版本包发布 | 未开始 |
 
 **3. 各批执行卡**
 

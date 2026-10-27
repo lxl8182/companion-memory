@@ -37,13 +37,24 @@ from ..persistence.evolution import (
     STATUS_WITHDRAWN,
     EvolutionStore,
 )
+from .growth_evidence import (
+    REASON_FACT_NOT_ELIGIBLE,
+    REASON_NOT_MATURE,
+    eligibility_of_row,
+    evidence_dto,
+)
 from .persona_card import MAX_SECTION_TEXT, CardSection, PersonaCardService
+from .reflection import MEMORY_KINDS, PROMOTION_RULES
 
 EVT_PERSONA_EVOLUTION_PROPOSED = "core.persona_evolution_proposed"
 PURPOSE_PERSONA_EVOLUTION_PROPOSAL = "persona_evolution_proposal"
 
 REASON_DISABLED = "disabled"
 REASON_INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+#: M4 (design 9.3): a raw fact explains a proposal but never qualifies for one,
+#: and an immature understanding has to wait for the growth gate.
+REASON_FACT_NOT_ELIGIBLE = REASON_FACT_NOT_ELIGIBLE
+REASON_NOT_MATURE = REASON_NOT_MATURE
 REASON_SOURCE_DELETED = "source_deleted"
 REASON_SECTION_FROZEN = "section_frozen"
 REASON_SECTION_NOT_EDITABLE = "section_not_editable"
@@ -81,6 +92,9 @@ class EvolutionSettings:
     max_operations: int = 4
     max_section_chars: int = 2000
     max_evidence: int = 8
+    #: Independent experiences a behavior strategy needs before it may drive an
+    #: automatic card change (mirrors the reflection growth gate).
+    evidence_min_support: int = 2
     proposal_ttl_hours: float = 72.0
     timeout_s: float = 60.0
     max_output_tokens: int = 1200
@@ -99,6 +113,8 @@ class EvolutionSettings:
             )
         if not 1 <= int(self.max_evidence) <= 32:
             raise ValueError("max_evidence must be between 1 and 32")
+        if not 1 <= int(self.evidence_min_support) <= 8:
+            raise ValueError("evidence_min_support must be between 1 and 8")
         if float(self.proposal_ttl_hours) <= 0:
             raise ValueError("proposal_ttl_hours must be positive")
         if float(self.timeout_s) <= 0:
@@ -193,6 +209,17 @@ def _normalize_request(request: Any) -> ProposalRequest:
             source_refs=request.get("source_refs") or (),
         )
     raise ValueError("request must be a ProposalRequest or mapping")
+
+
+def _is_fact(row: Mapping[str, Any]) -> bool:
+    """Whether an evidence row is a raw fact (never card-change eligible)."""
+    kind = str(row.get("kind") or row.get("evidence_type") or "").strip().lower()
+    if kind:
+        return kind == "fact"
+    return bool(row.get("fact_id")) or (
+        "source" not in row and "memory_kind" not in row
+        and str(row.get("source") or "").startswith(("user_", "ai_"))
+    )
 
 
 def _row_text(row: Mapping[str, Any]) -> str:
@@ -505,6 +532,9 @@ class EvolutionService:
                 [_check("evidence", False, REASON_SOURCE_DELETED)],
                 REASON_SOURCE_DELETED,
             )
+        rows, reason, eligibility_validation = self._apply_eligibility(rows)
+        if reason is not None:
+            return [], reason, eligibility_validation
         refs = {_row_ref(row) for row in rows if _row_ref(row)}
         missing = [ref for ref in req.source_refs if ref not in refs]
         if missing:
@@ -513,6 +543,75 @@ class EvolutionService:
                 REASON_SOURCE_DELETED,
             )
         return rows, None, _validation([_check("evidence", True)], None)
+
+    def _apply_eligibility(
+        self, rows: Sequence[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
+        """Keep only evidence that may drive a card change (design 9.3 / G15).
+
+        A raw fact is an explanation source: the model may read it, but it can
+        never by itself justify a persona edit, so a pool made only of facts is
+        rejected as `fact_not_eligible` instead of being fed to the model as if
+        it were proof. An understanding or strategy must be mature (it has to
+        have reached confirmed/promoted through the growth gate); otherwise the
+        batch is `not_mature`. Eligible rows come first, and ineligible ones stay
+        in the prompt as explanation with `eligible=false` on their DTO.
+        """
+        min_support = int(self._settings.evidence_min_support)
+        eligible: list[dict[str, Any]] = []
+        explanation: list[dict[str, Any]] = []
+        for row in rows:
+            provided = row.get("evidence")
+            # The provider already built the DTO from the *stored* row (support
+            # basis included). Re-deriving it from the flattened transport row
+            # would lose that basis and mistake a mature row for an empty one.
+            if isinstance(provided, Mapping) and "eligible" in provided:
+                dto = dict(provided)
+                ok = bool(dto.get("eligible"))
+                reason = str(dto.get("eligibility") or "")
+            else:
+                ok, reason = eligibility_of_row(
+                    row, promotion_rules=PROMOTION_RULES,
+                    min_support=min_support,
+                )
+                dto = evidence_dto(
+                    row,
+                    kind="fact" if _is_fact(row) else "reflection",
+                    promotion_rules=PROMOTION_RULES,
+                    min_support=min_support,
+                )
+            enriched = {
+                **row,
+                "eligible": ok,
+                "eligibility": reason,
+                "maturity": dto["maturity"],
+                "evidence": dto,
+            }
+            if ok:
+                eligible.append(enriched)
+            else:
+                explanation.append(enriched)
+        if eligible:
+            checks = [
+                _check("evidence", True),
+                _check("eligibility", True),
+            ]
+            return (
+                (eligible + explanation)[: self._settings.max_evidence],
+                None,
+                _validation(checks, None),
+            )
+        # The reason names the real blocker: a pool made only of raw facts is
+        # "facts are not eligible", a pool of immature understandings is
+        # "nothing is mature yet". A mixed pool has no mature candidate either.
+        reason = (
+            REASON_FACT_NOT_ELIGIBLE
+            if rows and all(_is_fact(row) for row in rows)
+            else REASON_NOT_MATURE
+        )
+        return [], reason, _validation(
+            [_check("eligibility", False, reason)], reason,
+        )
 
     async def _call_provider(
         self, provider: Any, name: str, req: ProposalRequest,
@@ -613,12 +712,25 @@ class EvolutionService:
         ]
         evidence_payload = []
         for row in rows:
+            dto = row.get("evidence")
+            if not isinstance(dto, Mapping):
+                dto = evidence_dto(
+                    row,
+                    kind="fact" if _is_fact(row) else "reflection",
+                    promotion_rules=PROMOTION_RULES,
+                    min_support=int(self._settings.evidence_min_support),
+                )
             evidence_payload.append({
                 "source_ref": _row_ref(row),
-                "kind": row.get("kind") or row.get("memory_kind") or "",
-                "text": _row_text(row),
+                "kind": dto.get("kind") or row.get("kind") or row.get("memory_kind") or "",
+                "text": dto.get("text") or _row_text(row),
                 "subject": _row_subject(row),
-                "scene": row.get("scene") or row.get("applies_to") or "",
+                "scene": dto.get("applies_to") or row.get("scene") or "",
+                "source_fact_ids": list(dto.get("source_fact_ids") or ()),
+                "experiences": list(dto.get("experiences") or ()),
+                "maturity": dto.get("maturity") or {},
+                "eligible": bool(dto.get("eligible")),
+                "eligibility": dto.get("eligibility") or "",
             })
         constraints = {
             "base_revision": snapshot.revision,
@@ -634,7 +746,9 @@ class EvolutionService:
             "\"section_id\":\"...\",\"text\":\"...\"}],\"reason\":\"...\"}. "
             "Use only open_section_ids for replace/merge/delete; add needs a new "
             "section_id. Never include config, credentials, model, voice or path "
-            "fields. Keep each text within max_section_chars. If nothing should "
+            "fields. Keep each text within max_section_chars. Evidence marked "
+            "eligible=false is explanation only: it may inform wording but must "
+            "never be the sole justification for an edit. If nothing should "
             "change, return {\"operations\":[],\"reason\":\"no_change\"}."
         )
         user = json.dumps({
@@ -848,6 +962,16 @@ class EvolutionService:
             ref = _row_ref(row)
             if ref and ref not in source_refs:
                 source_refs.append(ref)
+            # Origin facts of an eligible row travel with it: a proposal must be
+            # able to point at what it rests on, not just at the understanding id.
+            dto = row.get("evidence")
+            if isinstance(dto, Mapping):
+                for fact_id in dto.get("source_fact_ids") or ():
+                    if (
+                        isinstance(fact_id, str) and fact_id
+                        and fact_id not in fact_ids
+                    ):
+                        fact_ids.append(fact_id)
             kind = str(row.get("kind") or row.get("memory_kind") or "").lower()
             growth_id = row.get("growth_id")
             reflection_id = row.get("reflection_id")

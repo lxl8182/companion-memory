@@ -115,9 +115,19 @@ class ExtractionFlowTests(unittest.IsolatedAsyncioTestCase):
         fact = core.facts.load("demo")[0]
         self.assertIsNone(fact["event_start_at"])
         self.assertIsNone(fact["event_when_raw"])
-        self.assertEqual(set(fact["source_event_keys"]), {"host:demo:private:ctx1", "host:demo:private:ctx3"})
+        # Support vs. reference (growth design section 6.2): ctx1 only
+        # disambiguated the reference, it is not what the fact rests on.
+        self.assertEqual(fact["source_event_keys"], ["host:demo:private:ctx3"])
+        self.assertEqual(fact["context_refs"], ["host:demo:private:ctx1"])
+        self.assertEqual(fact["evidence_kind"], "user_assertion")
+        # Deleting the earlier reference must not delete the fact.
         await core.deletion_service.forget(DeletionRequest(
             scope=Scope("demo"), source_keys=("host:demo:private:ctx1",),
+        ))
+        self.assertEqual(len(core.facts.load("demo")), 1)
+        # Deleting the real source must.
+        await core.deletion_service.forget(DeletionRequest(
+            scope=Scope("demo"), source_keys=("host:demo:private:ctx3",),
         ))
         self.assertEqual(core.facts.load("demo"), [])
 

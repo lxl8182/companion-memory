@@ -216,7 +216,35 @@ class ServiceCloseoutTests(unittest.TestCase):
             status = self.ok("/v1/evolution/mode", {"mode": mode})
             self.assertEqual(status["mode"], mode)
         self.ok("/v1/evolution/mode", {"mode": "propose"})
-        proposal = self.ok("/v1/evolution/propose", {"base_revision": 2, "source_refs": [rows[0]["id"]], "focus_sections": ["tone"]})
+        # M4 (design 9.3): a raw fact is explanation only and can never qualify a
+        # card change on its own. Seed the mature understanding a real
+        # conversation would have produced, resting on two independent
+        # experiences, and let the fact ride along as the explanation source.
+        from companion_memory.domain.growth_evidence import support_basis_from_facts
+        understanding = {
+            "id": "ref_understanding",
+            "text": "用户喜欢温柔、具体的表达",
+            "status": "confirmed",
+            "entity": "relationship",
+            "source_fact_ids": [rows[0]["id"]],
+            "support_basis": support_basis_from_facts([
+                {"id": rows[0]["id"], "text": "用户喜欢温柔", "episode_id": "ep:test:e1",
+                 "source_event_keys": list(rows[0].get("source_event_keys") or ()),
+                 "evidence_kind": "explicit_feedback"},
+                {"id": "fact_second", "text": "用户又夸具体",
+                 "episode_id": "ep:test:e2",
+                 "source_event_keys": ["host:test:private:second"],
+                 "evidence_kind": "observed_action"},
+            ]),
+            "created_at": "2026-10-20T00:00:00+00:00",
+        }
+        core_rows = self.service.core.reflections.load("test")
+        self.service.core.reflections.save("test", core_rows + [understanding])
+        proposal = self.ok("/v1/evolution/propose", {
+            "base_revision": 2,
+            "source_refs": ["ref_understanding", rows[0]["id"]],
+            "focus_sections": ["tone"],
+        })
         self.assertEqual(proposal["status"], "proposed", proposal)
         self.ok("/v1/evolution/" + proposal["proposal_id"] + "/accept", {"reason": "合成证据验收"})
         card = self.ok("/v1/persona")["card"]

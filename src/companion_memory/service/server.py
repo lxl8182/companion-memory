@@ -797,6 +797,17 @@ class MemoryRequestHandler(BaseHTTPRequestHandler):
             return False
         identity = management.identity(self.headers.get("X-Companion-Client", ""),
                                        self.headers.get("X-Companion-Token", ""))
+        if path in ("/v1/proactive/poll", "/v1/proactive/observe",
+                    "/v1/proactive/complete", "/v1/proactive/release", "/v1/proactive/check", "/v1/proactive/use"):
+            management.require_memory_outputs(identity)
+            if method != "POST":
+                self._send(405, {"code": "method_not_allowed"})
+                return True
+            from .proactive import handle
+            import asyncio
+            body = management.scoped(self._read_json(), identity)
+            self._send(200, asyncio.run(handle(self.api, path.rsplit("/", 1)[1], body, identity)))
+            return True
         # The host persona capability is a narrow grant: it never rides on the
         # console flag, so these two routes are dispatched before the admin
         # gate and re-checked inside `ManagementApi`.
@@ -826,6 +837,50 @@ class MemoryRequestHandler(BaseHTTPRequestHandler):
                 return True
             self._send(405, {"code": "method_not_allowed"})
             return True
+        # Explicit teaching (MC04-T) is a third independent grant, dispatched
+        # before the console gate and re-checked in the API: a chat client may
+        # point at one of its own saved messages, never post rule text.
+        if path in ("/v1/persona/teach", "/v1/persona/teach/revoke", "/v1/persona/teachings"):
+            if path == "/v1/persona/teachings":
+                if method != "GET":
+                    self._send(405, {"code": "method_not_allowed"})
+                    return True
+                query = {key: values for key, values in parse_qs(parsed.query).items() if values}
+                self._send(200, management.get(path, query, identity=identity))
+                return True
+            if method == "POST":
+                raw = management.scoped(self._read_json(), identity)
+                self._send(200, management.post(path, raw, identity=identity))
+                return True
+            self._send(405, {"code": "method_not_allowed"})
+            return True
+        # M5: assistant outputs are their own capability route (memory_outputs),
+        # dispatched before the console gate and before the generic body read
+        # below (reading the request body twice would block on the second
+        # attempt), and re-checked inside the API so a normal chat client cannot
+        # reach them by a routing mistake.
+        if path in ("/v1/outputs", "/v1/outputs/deliver", "/v1/outputs/invalidate"):
+            management.require_memory_outputs(identity)
+            if path == "/v1/outputs" and method == "GET":
+                query = {key: values for key, values in parse_qs(parsed.query).items() if values}
+                self._send(200, management.get(path, query, identity=identity))
+                return True
+            if method == "POST":
+                scoped = management.scoped(self._read_json(), identity)
+                self._send(200, management.post(path, scoped, identity=identity))
+                return True
+            self._send(405, {"code": "method_not_allowed"})
+            return True
+        # M5: the working summary and the follow-up resolver are read-only
+        # projections available to any identified client (they only ever show
+        # this subject's own records), so they ride the protocol read routes.
+        if path in ("/v1/working-summary", "/v1/followup"):
+            if method != "GET":
+                self._send(405, {"code": "method_not_allowed"})
+                return True
+            query = {key: values for key, values in parse_qs(parsed.query).items() if values}
+            self._send(200, management.get(path, query, identity=identity))
+            return True
         raw = self._read_json() if method == "POST" else {k:v[0] for k,v in parse_qs(parsed.query).items() if v}
         body = management.scoped(raw, identity)
         if method == "POST" and path in ("/v1/chat", "/v1/turns", "/v1/context"):
@@ -847,7 +902,11 @@ class MemoryRequestHandler(BaseHTTPRequestHandler):
         if path in ("/v1/chat", "/v1/turns"):
             self._send(405, {"code": "method_not_allowed"})
             return True
-        protocol_paths = path in ("/v1/events", "/v1/receipts", "/v1/context/validate", "/v1/context/reserve", "/v1/cleanup/pending") or path.endswith("/ack")
+        protocol_paths = path in (
+            "/v1/events", "/v1/receipts", "/v1/receipts/summary",
+            "/v1/context/validate", "/v1/context/reserve",
+            "/v1/cleanup/pending",
+        ) or path.endswith("/ack")
         if not identity["admin"] and not protocol_paths:
             raise ApiError("forbidden", "this operation requires the console identity")
         generation = self.api._service.begin_request()

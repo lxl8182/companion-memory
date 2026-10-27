@@ -46,6 +46,28 @@ FACT_ENTITIES = ("master", "neko", "relationship")
 SHARED_EXPERIENCE = "shared_experience"
 PREFERENCE = "preference"
 
+#: Evidence kinds (growth design section 6.2). They say what a fact rests on,
+#: which is what the reflection/growth gates must read instead of guessing
+#: from the source string. `context_refs` is deliberately not one of these:
+#: earlier dialogue only disambiguates a reference and never supports a fact.
+EVIDENCE_KINDS = (
+    "user_assertion",
+    "explicit_feedback",
+    "observed_action",
+    "tool_result",
+    "agent_expression",
+    "quoted_example",
+)
+#: Default kind per fact source, used when the model omits or invents one.
+EVIDENCE_BY_SOURCE = {
+    "user_observation": "user_assertion",
+    "user_correction": "user_assertion",
+    "ai_disclosure": "agent_expression",
+    "shared_experience": "observed_action",
+}
+#: Cap on retained evidence keys per fact (mirrors reflection.MAX_SOURCE_KEYS).
+MAX_FACT_SOURCE_KEYS = 32
+
 
 
 @dataclass(frozen=True)
@@ -104,6 +126,8 @@ class ExtractionService:
         gate: SuppressionGate | None = None,
         timeindex_factory: Any = None,
         corrections: Any = None,
+        conversation_state: Any = None,
+        proactive: Any = None,
     ) -> None:
         self._roots = roots
         self._sink = sink
@@ -118,6 +142,8 @@ class ExtractionService:
         self._gate = gate
         self._timeindex_factory = timeindex_factory
         self._corrections = corrections
+        self._conversation_state = conversation_state
+        self._proactive = proactive
 
     # -- ingest ----------------------------------------------------------
 
@@ -206,7 +232,7 @@ class ExtractionService:
             # source, otherwise a second op would extract the same window twice.
             repaired = self._repair_missing_extraction_op(
                 character, source_key, classification, episode_id, language,
-                messages=clean,
+                messages=clean, occurred_at=now,
             )
             return IngestResult("duplicate", source_key, classification, episode_id,
                                 op_id=repaired, reason="duplicate_source")
@@ -225,6 +251,12 @@ class ExtractionService:
         if kept:
             self._recent.append(character, kept)
             self._store_raw(character, kept, session_id or _session_from(scene, episode_id))
+        if self._proactive is not None and is_extractable(classification):
+            self._proactive.absorb_user_turn(
+                character, text=user_text, subject=subject,
+                scene=str(metadata_of(clean[0]).get("scene") or "") if clean else "",
+                request_id=source_key,
+            )
         if not is_extractable(classification):
             return IngestResult("kept_in_plugin", source_key, classification, episode_id,
                                 reason="stored_without_extraction")
@@ -245,6 +277,9 @@ class ExtractionService:
             "episode_id": episode_id or "",
             "content_class": classification,
             "language": language,
+            # Business time of the turn, carried so a batch processed hours or
+            # days later still resolves relative time from when it was spoken.
+            "occurred_at": now.isoformat(),
         }
         op_id = self._outbox.enqueue(character, EXTRACT_OP_TYPE, payload)
         should_inline = self._settings.inline if inline is None else inline
@@ -258,6 +293,7 @@ class ExtractionService:
             episode_id=episode_id,
             content_class=classification,
             language=language,
+            occurred_at=now,
         )
         if outcome.status == "failed":
             self._outbox.fail(character, op_id, error=outcome.reason or "extraction_failed")
@@ -278,6 +314,7 @@ class ExtractionService:
         language: str,
         *,
         messages: Sequence[Mapping[str, Any]] = (),
+        occurred_at: datetime | None = None,
     ) -> str | None:
         """Re-enqueue the extraction op if a duplicate turn lost it.
 
@@ -304,6 +341,7 @@ class ExtractionService:
             "episode_id": episode_id or "",
             "content_class": classification,
             "language": language,
+            "occurred_at": (occurred_at or self._clock.now()).isoformat(),
         }
         return self._outbox.enqueue(character, EXTRACT_OP_TYPE, payload)
 
@@ -324,6 +362,7 @@ class ExtractionService:
                     episode_id=payload.get("episode_id") or None,
                     content_class=payload.get("content_class"),
                     language=payload.get("language") or "zh",
+                    occurred_at=_parse_iso(payload.get("occurred_at")),
                 )
             except Exception as exc:  # noqa: BLE001 - keep the op for a retry
                 outcome = ExtractionOutcome("failed", reason=f"error:{type(exc).__name__}")
@@ -345,6 +384,7 @@ class ExtractionService:
         episode_id: str | None = None,
         content_class: str | None = None,
         language: str = "zh",
+        occurred_at: datetime | None = None,
     ) -> ExtractionOutcome:
         """Extract and persist facts from one window (None=failure, []=empty)."""
         settings = self._settings
@@ -366,24 +406,51 @@ class ExtractionService:
         kept = self._barrier.filter_messages(character, kept)
         if not kept:
             return ExtractionOutcome("empty", reason="filtered_out")
-        window_keys = sorted({
+        # Support vs. context (growth design section 6.2). `evidence_keys` are
+        # the keys of the turn actually being extracted: they are what the fact
+        # *rests on*. Earlier dialogue only disambiguates a reference, so its
+        # keys go to `context_refs` and never inflate the support count. Merging
+        # them (the previous behaviour) made every fact in a session carry the
+        # whole session, which the growth gate then counted as independent
+        # experiences.
+        evidence_keys = sorted({
             key for message in kept for key in message_source_keys(message)
         } | {str(key) for key in source_keys if key})
+        context_keys: list[str] = []
+        metadata = metadata_of(kept[0])
+        state_updates = []
         if content_class == SHARED_EXPERIENCE:
             candidates = [_shared_experience_candidate(kept)]
         else:
             if self._model is None:
                 return ExtractionOutcome("failed", reason="model_unavailable")
             snapshot = self._barrier.snapshot(character)
-            context = self._prompt_context(character, messages, kept[0], window_keys)
+            context = self._prompt_context(character, messages, kept[0], evidence_keys)
             context, _ = filter_messages_for_extraction(
                 context, legacy_barrier_cutoff=legacy_cutoff, deleted_source_keys=deleted_keys,
             )
             context = self._barrier.filter_messages(character, context)
-            window_keys = sorted(set(window_keys) | {
+            context_keys = sorted({
                 key for message in context for key in message_source_keys(message)
-            })
+            } - set(evidence_keys))
             prompt = _build_prompt(kept, context)
+            if self._conversation_state is not None:
+                state = self._conversation_state.snapshot(character, metadata)
+                prompt += (
+                    "\n\n同时维护用户正在进行的事项。输出改为 JSON 对象："
+                    '{"facts":[上述事实],"state_updates":[事项操作]}。'
+                    "没有事实或事项时分别输出空数组。事项包括明确计划、正在处理的事、"
+                    "后续进展、已经完成/取消。普通闲聊不新建事项。"
+                    "操作只允许 set_progress/set_concern/close_progress/close_concern；"
+                    "更新或结束已有事项必须引用下面的 id，新建不填 id。"
+                    "操作字段为 op/id/text/next_step/why。next_step 写适合后续交流的具体下一步。"
+                    "结案使用 close_*；暂停话题不是完成事项。"
+                    "只有用户明确约定提醒或回访才设 agreed_followup=true；"
+                    "普通提到未来计划不构成提醒约定。followup_when 可选，格式与 event_when.start "
+                    "一致（offset/unit），以本轮原始时间计算合适的跟进时刻。不得凭空安排时间。"
+                    "\n本轮原始时间：" + (occurred_at or self._clock.now()).isoformat()
+                    + "\n当前同范围事项：" + json.dumps(list(state.items)[:20], ensure_ascii=False)
+                )
             try:
                 raw = await self._model.invoke(
                     settings.tier,
@@ -394,18 +461,29 @@ class ExtractionService:
                 )
             except Exception as exc:  # noqa: BLE001 - transport failure is retryable
                 return ExtractionOutcome("failed", reason=f"transport:{type(exc).__name__}")
-            candidates = _parse_candidates(raw, settings.max_candidates)
-            if candidates is None:
+            parsed = _parse_extraction(raw, settings.max_candidates)
+            if parsed is None:
                 return ExtractionOutcome("failed", reason="parse")
+            candidates, state_updates = parsed
             if self._barrier.is_stale(character, snapshot):
                 return ExtractionOutcome("stale", reason="barrier_stale")
-        metadata = (kept[0].get("data") or {}).get("metadata") or kept[0].get("metadata") or {}
         candidates = [dict(candidate, subject=metadata.get("subject", "private"),
                            applies_to=metadata.get("applies_to", {}),
-                           source_event_keys=window_keys) for candidate in candidates]
+                           source_event_keys=evidence_keys,
+                           context_refs=context_keys) for candidate in candidates]
         written, persisted = self._persist_candidates(
-            character, candidates, source_keys=window_keys, episode_id=episode_id,
+            character, candidates, source_keys=evidence_keys,
+            context_refs=context_keys, episode_id=episode_id,
+            occurred_at=occurred_at,
         )
+        if self._conversation_state is not None:
+            try:
+                self._conversation_state.apply(
+                    character, state_updates, metadata=metadata,
+                    source_keys=evidence_keys, occurred_at=occurred_at,
+                )
+            except ValueError as exc:
+                return ExtractionOutcome("failed", reason=f"state_update:{exc}")
         return ExtractionOutcome(
             "completed", facts_written=written,
             candidates=tuple(dict(row) for row in persisted),
@@ -449,8 +527,17 @@ class ExtractionService:
         *,
         source_keys: Sequence[str],
         episode_id: str | None,
+        context_refs: Sequence[str] = (),
+        occurred_at: datetime | None = None,
     ) -> tuple[int, list[Mapping[str, Any]]]:
-        """Dedupe by hash, apply the deletion fence, then commit facts/archive."""
+        """Dedupe by hash, apply the deletion fence, then commit facts/archive.
+
+        A fact seen again is a real second source, not a retry: the new keys are
+        merged into the existing row and `last_confirmed_at` moves forward. The
+        previous behaviour dropped the second sighting entirely, so deleting the
+        first source deleted the fact even though the user had said it twice
+        (growth design G08).
+        """
         if not candidates:
             return 0, []
         deleted = self._barrier.state(character).index.source_keys
@@ -466,6 +553,11 @@ class ExtractionService:
             if isinstance(digest, str) and digest:
                 by_hash.setdefault(scope_hash(row, digest), row)
         now = self._clock.now()
+        # Business time of the turn, not of the queue: a batch processed the day
+        # after it was spoken must still resolve "tomorrow" against the day it
+        # was said (growth design G11).
+        business_time = occurred_at or now
+        context_keys = [str(key) for key in context_refs or () if isinstance(key, str) and key.strip()]
         batch_hashes: set[tuple] = set()
         new_rows: list[dict[str, Any]] = []
         upgrades = 0
@@ -493,11 +585,22 @@ class ExtractionService:
             existing = by_hash.get(key)
             if existing is not None:
                 source = _candidate_source(candidate)
+                changed = False
                 if existing.get("source") == "ai_disclosure" and source == "user_observation":
                     # User corroboration upgrades a self-disclosure once; the
                     # reverse (user fact -> ai disclosure) never happens.
                     existing["source"] = "user_observation"
                     existing["signal_processed"] = False
+                    changed = True
+                if _merge_source_keys(existing, sorted(set(candidate_keys) | set(source_keys))):
+                    changed = True
+                if _merge_context_refs(existing, context_keys):
+                    changed = True
+                if _confirm_kind(existing):
+                    changed = True
+                if changed:
+                    existing["last_confirmed_at"] = now.isoformat()
+                    existing["confirm_count"] = _as_count(existing.get("confirm_count")) + 1
                     upgrades += 1
                 continue
             if key in batch_hashes:
@@ -506,7 +609,8 @@ class ExtractionService:
             row = self._fact_row(
                 candidate, text=text, digest=digest,
                 source_keys=sorted(set(candidate_keys) | set(source_keys)),
-                episode_id=episode_id, now=now,
+                context_refs=context_keys,
+                episode_id=episode_id, now=business_time,
             )
             by_hash[key] = row
             new_rows.append(row)
@@ -523,6 +627,7 @@ class ExtractionService:
         source_keys: Sequence[str],
         episode_id: str | None,
         now: datetime,
+        context_refs: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Build one host-shaped fact row (fields frozen by the spec)."""
         importance = candidate.get("importance")
@@ -556,6 +661,10 @@ class ExtractionService:
             "embedding_text_sha256": None,
             "embedding_model_id": None,
             "source_event_keys": list(source_keys),
+            "context_refs": list(context_refs)[:MAX_FACT_SOURCE_KEYS],
+            "evidence_kind": _evidence_kind(candidate, source),
+            "last_confirmed_at": now.isoformat(),
+            "confirm_count": 1,
         }
         row["subject"] = str(candidate.get("subject") or "private")
         row["applies_to"] = dict(candidate.get("applies_to") or {})
@@ -600,6 +709,83 @@ def _candidate_source(candidate: Mapping[str, Any]) -> str:
     if isinstance(source, str) and source in FACT_SOURCES:
         return source
     return "user_observation"
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    """Parse a queued business timestamp; an unreadable value means "now".
+
+    A missing key is the old-payload case (ops enqueued before this field
+    existed) and must keep working rather than fail the window.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip())
+    except ValueError:
+        return None
+
+
+def _evidence_kind(candidate: Mapping[str, Any], source: str) -> str:
+    """Classify what the fact rests on, defaulting by source.
+
+    The model may name a kind when the prompt supports it; an invented or
+    missing value falls back to the source's default rather than being trusted.
+    """
+    raw = candidate.get("evidence_kind")
+    if isinstance(raw, str) and raw.strip().lower() in EVIDENCE_KINDS:
+        return raw.strip().lower()
+    return EVIDENCE_BY_SOURCE.get(source, "user_assertion")
+
+
+def _as_count(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, value)
+
+
+def _merge_source_keys(row: dict[str, Any], keys: Sequence[str]) -> bool:
+    """Union new evidence keys into a stored fact; True if anything changed.
+
+    Retries and mirrors carry the same key, so this is a no-op for them; only a
+    genuinely different message adds support.
+    """
+    current = [
+        str(key) for key in row.get("source_event_keys") or ()
+        if isinstance(key, str) and key.strip()
+    ]
+    added = [key for key in keys if key not in current]
+    if not added:
+        return False
+    merged = (current + added)[:MAX_FACT_SOURCE_KEYS]
+    row["source_event_keys"] = merged
+    return True
+
+
+def _merge_context_refs(row: dict[str, Any], keys: Sequence[str]) -> bool:
+    """Record additional reference-only keys; they never count as support."""
+    if not keys:
+        return False
+    current = [
+        str(key) for key in row.get("context_refs") or ()
+        if isinstance(key, str) and key.strip()
+    ]
+    added = [key for key in keys if key not in current and key not in (row.get("source_event_keys") or ())]
+    if not added:
+        return False
+    row["context_refs"] = (current + added)[:MAX_FACT_SOURCE_KEYS]
+    return True
+
+
+def _confirm_kind(row: dict[str, Any]) -> bool:
+    """Promote a weak kind when a user assertion corroborates it."""
+    if row.get("evidence_kind") != "agent_expression":
+        return False
+    kinds = row.get("evidence_kinds")
+    values = [str(item) for item in kinds or () if isinstance(item, str)]
+    if "user_assertion" in values:
+        return False
+    row["evidence_kinds"] = values + ["user_assertion"]
+    return True
 
 
 def _fact_hash(text: str) -> str:
@@ -664,8 +850,8 @@ def _build_prompt(
     )
 
 
-def _parse_candidates(raw: Any, limit: int) -> list[dict[str, Any]] | None:
-    """Parse the model JSON array; None means a terminal parse failure."""
+def _parse_extraction(raw: Any, limit: int) -> tuple[list[dict[str, Any]], list[dict]] | None:
+    """Accept the combined extraction result and existing fact-only arrays."""
     if not isinstance(raw, str):
         return None
     text = raw.strip()
@@ -680,7 +866,13 @@ def _parse_candidates(raw: Any, limit: int) -> list[dict[str, Any]] | None:
         data = json.loads(text)
     except (json.JSONDecodeError, ValueError):
         return None
-    if not isinstance(data, list):
+    updates = []
+    if isinstance(data, Mapping):
+        updates = data.get("state_updates", [])
+        data = data.get("facts")
+    if not isinstance(data, list) or not isinstance(updates, list):
+        return None
+    if any(not isinstance(item, Mapping) for item in updates):
         return None
     candidates: list[dict[str, Any]] = []
     for item in data[:limit]:
@@ -690,7 +882,12 @@ def _parse_candidates(raw: Any, limit: int) -> list[dict[str, Any]] | None:
         if not str(candidate.get("text") or "").strip():
             continue
         candidates.append(candidate)
-    return candidates
+    return candidates, [dict(item) for item in updates[:8]]
+
+
+def _parse_candidates(raw: Any, limit: int) -> list[dict[str, Any]] | None:
+    parsed = _parse_extraction(raw, limit)
+    return parsed[0] if parsed is not None else None
 
 
 _EVENT_UNIT_SECONDS = {

@@ -26,10 +26,12 @@ from typing import Any, Mapping
 
 from ..adapters.composition import MemoryCore, build_memory_core
 from ..adapters.model_http import HttpModelInvoker, ModelSettings
+from ..domain.persona_teaching import PersonaTeachingService
 from ..domain.turns import TurnCommitService
 from ..domain.evolution import EvolutionSettings
 from ..errors import RootLockConflict
 from ..persistence.ownership import RootLock, acquire_root_lock
+from ..persistence.persona_teaching import PersonaTeachingStore
 
 #: Capability states reported by `/v1/health` and the status block.
 READY = "ready"
@@ -178,8 +180,32 @@ class MemoryService:
         self._drained.set()
         self._last_drain: dict[str, Any] = {}
         self._background_stopped = False
+        # MC04-T: explicit teaching is assembled here, *before* any recovery, so
+        # its journal replay handler is registered before the first reconcile.
+        # A teach event written by an older process must be replayable on
+        # startup; an unknown event type would otherwise pause the whole replay.
+        # It needs no new core field: the store and the card/publish services it
+        # writes through all already exist on the core.
+        self.persona_teaching = self._build_persona_teaching(core)
         from .protocol import ServiceProtocol
         self.protocol = ServiceProtocol(self)
+
+    @staticmethod
+    def _build_persona_teaching(core: MemoryCore) -> PersonaTeachingService:
+        store = PersonaTeachingStore(
+            roots=core.roots, store=core.store, clock=core.clock,
+            permit=core.permit,
+        )
+        return PersonaTeachingService(
+            roots=core.roots,
+            store=store,
+            card_service=core.persona_card_service,
+            publish_service=core.persona_publish,
+            journal=core.journal,
+            clock=core.clock,
+            permit=core.permit,
+            barrier=core.barrier,
+        )
 
     # -- lifecycle -------------------------------------------------------
 

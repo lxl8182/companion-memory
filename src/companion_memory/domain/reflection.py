@@ -4,8 +4,11 @@ This module owns the host's reflection lifecycle on top of the B05 stores
 (`reflections.json`, `surfaced.json`, `synth_backoff.json`,
 `growth_uses.json`, `reflection_archive/`) and the B04 fact view:
 
-* synthesis (facts -> pending reflection, optional growth candidate) through
-  the injected `ModelInvoker` with explicit tier/budget/timeout;
+* synthesis (new evidence + existing understandings -> one local operation)
+  through the injected `ModelInvoker` with explicit tier/budget/timeout; the
+  prompt carries the related old rows (status, maturity, scope, counter
+  evidence) and the strategies already adopted, and the model may answer
+  no_change instead of inventing a conclusion;
 * read-time evidence decay (reinforcement half-life 30 days, disputation 180
   days, `protected=True` -> `inf`) and daily `sub_zero_days` accounting;
 * promotion: score-driven (1.0 / 2.0), time-driven when `powerful_memory`
@@ -20,13 +23,29 @@ This module owns the host's reflection lifecycle on top of the B05 stores
 
 Safety rules kept from the host spec (B05 spec section 6.1):
 
-* reflection ids are deterministic: `ref_<sha256(sorted(source_fact_ids))[:16]>`
-  (the host appends `\\x00` between ids), so re-synthesizing the same batch is
-  idempotent;
+* every synthesis run applies exactly *one* local operation to the existing
+  understandings (add / reinforce / refine / supersede / contradict / split)
+  or reports no_change, and a no-op batch is a success, not a failure
+  (design section 7.2 and section 15 decision 3);
+* a reflection id is content-addressed,
+  `ref_<sha1(topic_key|scope_key|text_hash)[:16]>`; the old rule hashed
+  the sorted source fact ids, so every new batch produced a new row and a
+  reworded understanding could never meet its own predecessor. The content
+  triple keeps exact re-synthesis idempotent while letting one topic hold
+  several different understandings;
 * the synthesis backoff key is the *full* unabsorbed id set, not the capped
-  batch id, so a poisoned batch cannot starve new facts;
+  batch id, so a poisoned batch cannot starve new facts. That same key also
+  carries the no_change marker, which is what makes "do not re-evaluate a
+  batch when nothing changed" fall out of the key itself: new evidence changes
+  the id set, hence the key, hence the entry. No extra state file and no extra
+  replay handler are needed (see `_mark_no_change`);
 * `withdrawn` is not a terminal/hidden status: a corrected reflection stays
-  readable as a row but no longer renders or promotes;
+  readable as a row but no longer renders or promotes. It stays reserved for
+  "the sources went away" (deletion or correction barrier);
+* `superseded` IS terminal, and is deliberately a *different* status from
+  `withdrawn`: an understanding retired by newer evidence has a different
+  cause and different replay obligations than one whose sources were deleted.
+  Neither renders, promotes or gets recalled; both stay readable as history;
 * before any model-backed write the barrier snapshot is re-checked and a stale
   result is discarded (never written);
 * every reflection write passes the deletion barrier first.
@@ -46,6 +65,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -54,11 +74,26 @@ from typing import Any, Mapping, Sequence
 from ..contracts import MemoryBlock
 from ..domain.barrier import DeletionBarrier, episode_ids_of
 from ..errors import BarrierStaleError, ContentBlockedError
-from ..invalidation import reflection_invalidated, row_matches_subject, text_hash
+from ..invalidation import (
+    normalize_text,
+    reflection_invalidated,
+    row_matches_subject,
+    text_hash,
+)
 from ..persistence.facts_view import FactsView
 from ..persistence.journal import EventJournal
 from ..persistence.reflections import ReflectionStore
 from ..ports import Clock, ModelInvoker, StorageRoots, WritePermit
+from .growth_evidence import (
+    apply_support_removal_to_row,
+    evidence_dto,
+    maturity_of_row,
+    merge_basis,
+    recompute_support_after_removal,
+    support_basis_from_facts,
+    support_basis_from_row,
+    summarize_basis,
+)
 
 # -- event vocabulary (host memory/event_log.py names, persisted identifiers) --
 
@@ -87,12 +122,12 @@ EVIDENCE_SNAPSHOT_KEYS: tuple[str, ...] = (
 #: Hidden statuses (host _shared.REFLECTION_TERMINAL_STATUSES). `withdrawn`
 #: is deliberately absent: a withdrawn row is still stored but not rendered.
 REFLECTION_TERMINAL_STATUSES: frozenset[str] = frozenset({
-    "promoted", "denied", "archived", "merged", "promote_blocked",
+    "promoted", "denied", "archived", "merged", "promote_blocked", "superseded",
 })
 REFLECTION_ACTIVE_STATUSES: tuple[str, ...] = ("pending", "confirmed")
 REFLECTION_STATUSES: frozenset[str] = frozenset({
     "pending", "confirmed", "promoted", "denied", "archived", "merged",
-    "promote_blocked", "withdrawn",
+    "promote_blocked", "withdrawn", "superseded",
 })
 
 MEMORY_KINDS: tuple[str, ...] = ("habit", "interest", "experience", "relationship")
@@ -134,6 +169,65 @@ SHARED_SCOPE_VALUES = frozenset({"shared", "global", "all"})
 _SCENE_KEYS = ("plugin_id", "game_id", "session_id")
 
 _FENCE = chr(96) * 3
+
+#: Synthesis operations (design section 7.2): exactly one per batch.
+REFLECTION_OPERATIONS: tuple[str, ...] = (
+    "add",
+    "reinforce",
+    "refine",
+    "supersede",
+    "contradict",
+    "split",
+    "no_change",
+)
+#: Spellings a model may emit for the operations above.
+OPERATION_ALIASES: dict[str, str] = {
+    "create": "add",
+    "new": "add",
+    "append": "add",
+    "merge": "refine",
+    "update": "refine",
+    "narrow": "refine",
+    "adjust": "refine",
+    "replace": "supersede",
+    "retire": "supersede",
+    "outdate": "supersede",
+    "conflict": "contradict",
+    "dispute": "contradict",
+    "refute": "contradict",
+    "split_into": "split",
+    "none": "no_change",
+    "noop": "no_change",
+    "no_op": "no_change",
+    "unchanged": "no_change",
+    "keep": "no_change",
+    "skip": "no_change",
+}
+
+#: Operations that maintain an existing row instead of creating one.
+_MAINTENANCE_OPERATIONS: frozenset[str] = frozenset({
+    "reinforce", "refine", "supersede", "contradict",
+})
+#: Rows a maintenance operation may act on. The promoted status is included on
+#: purpose: a promoted understanding is still the current one, it was only
+#: materialised into the persona card, so new evidence must be able to retire
+#: it (and the derived persona entry along with it).
+_TARGET_STATUSES: tuple[str, ...] = ("pending", "confirmed", "promoted")
+
+MAX_TOPIC_CHARS = 64
+#: How many existing understandings are shown to the model in one prompt.
+MAX_PROMPT_OLD_ROWS = 8
+MAX_PROMPT_STRATEGIES = 6
+#: Minimum term containment for "these two rows are the same understanding".
+SEMANTIC_MATCH_MIN = 0.45
+#: refine keeps the previous wording so the change stays auditable.
+MAX_REFINE_HISTORY = 5
+#: Evidence deltas for the maintenance operations (maturity, design 7.4).
+REINFORCE_DELTA = 0.3
+CONTRADICTION_DELTA = 1.0
+#: Retirement reasons; withdrawn stays reserved for source deletion.
+SUPERSEDE_REASON = "superseded_by_new_evidence"
+CONTRADICT_REASON = "contradicted_by_new_evidence"
 
 
 # -- settings and outcomes ---------------------------------------------------
@@ -177,6 +271,7 @@ class SynthesisOutcome:
     absorbed_fact_ids: tuple[str, ...] = ()
     growth_item_ids: tuple[str, ...] = ()
     reason: str | None = None
+    operation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -252,6 +347,16 @@ def _bounded(value: Any, limit: int) -> str:
     return value.strip()[:limit]
 
 
+def operation_of(value: Any) -> str:
+    """Normalize one model operation; an unknown spelling returns ""."""
+    raw = _bounded(value, 40).lower().replace(" ", "_").replace("-", "_")
+    if not raw:
+        return ""
+    if raw in REFLECTION_OPERATIONS:
+        return raw
+    return OPERATION_ALIASES.get(raw, "")
+
+
 def _normalize_claim(value: Any) -> str:
     text = _bounded(value, MAX_CLAIM_CHARS)
     return " ".join(text.split())
@@ -301,6 +406,137 @@ def _entry_applies_to_scene(entry: Any, scene: Any) -> bool:
         if current.get(key) != wanted.strip()[:64]:
             return False
     return True
+
+
+# -- topic / scope keys and scope-constrained semantic matching --------------
+
+_CJK_RANGES: tuple[tuple[int, int], ...] = (
+    (0x3040, 0x30FF),  # hiragana / katakana
+    (0x3400, 0x4DBF),  # CJK extension A
+    (0x4E00, 0x9FFF),  # CJK unified ideographs
+    (0xF900, 0xFAFF),  # CJK compatibility ideographs
+    (0xAC00, 0xD7AF),  # hangul syllables
+)
+_TERM_SPLIT_RE = re.compile(
+    "[^0-9a-z"
+    "\u3040-\u30ff"
+    "\u3400-\u4dbf"
+    "\u4e00-\u9fff"
+    "\uf900-\ufaff"
+    "\uac00-\ud7af"
+    "]+"
+)
+#: Filler terms dropped before overlap is measured; without this almost every
+#: Chinese sentence would look similar to every other one.
+_TOPIC_STOP_TERMS = frozenset({
+    "用户", "主人", "我们", "自己", "觉得", "可能", "好像", "时候", "东西",
+    "事情", "现在", "以前", "然后", "什么", "这个", "那个", "一个", "一次",
+})
+
+
+def _is_cjk(char: str) -> bool:
+    if not char:
+        return False
+    code = ord(char[0])
+    return any(start <= code <= end for start, end in _CJK_RANGES)
+
+
+def _content_tokens(text: Any) -> set[str]:
+    """CJK 2/3-grams plus Latin words, minus filler terms.
+
+    A deliberate local copy of `domain.recall.tokenize`: `recall` imports
+    `REFLECTION_TERMINAL_STATUSES` from this module (lazily, inside `_collect_pool`),
+    so importing `recall` at module scope here would close a cycle. Keeping the
+    tokenizer next to its only consumer also keeps the matching rule of design
+    section 7.2 readable in one place.
+    """
+    raw = normalize_text(text)
+    tokens: set[str] = set()
+    for segment in _TERM_SPLIT_RE.split(raw):
+        if not segment:
+            continue
+        if segment.isascii():
+            if len(segment) >= 2:
+                tokens.add(segment)
+            continue
+        if sum(1 for char in segment if _is_cjk(char)) > len(segment) // 2:
+            for size in (2, 3):
+                for index in range(len(segment) - size + 1):
+                    tokens.add(segment[index:index + size])
+        elif len(segment) >= 2:
+            tokens.add(segment)
+    return {token for token in tokens if token not in _TOPIC_STOP_TERMS}
+
+
+def _semantic_overlap(left: Any, right: Any) -> float:
+    """Containment of the shorter term set in the longer one (0.0 .. 1.0)."""
+    first = _content_tokens(left)
+    second = _content_tokens(right)
+    if not first or not second:
+        return 0.0
+    return len(first & second) / float(min(len(first), len(second)))
+
+
+def topic_key(value: Any) -> str:
+    """Stable *grouping* key for one topic; never a uniqueness constraint.
+
+    One topic may hold several different understandings (design section 7.2:
+    a stable per-topic key plus scope-constrained semantic candidate matching).
+    The key only decides which rows are shown together; whether two of them
+    are the *same* understanding is decided by `_semantic_overlap` plus an
+    explicit `target_reflection_id` from the model.
+    """
+    base = "".join(normalize_text(value)[: MAX_TOPIC_CHARS * 2].split())
+    if not base:
+        return ""
+    return "tp_" + hashlib.sha1(base.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def scope_key(applies_to: Any = None) -> str:
+    """Hash of the normalized scene; "" means the row applies everywhere."""
+    scene = _normalize_scene(applies_to)
+    if not scene:
+        return ""
+    seed = json.dumps(
+        {key: scene[key] for key in sorted(scene)}, ensure_ascii=False,
+    )
+    return "sc_" + hashlib.sha1(seed.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _row_scope_key(row: Any) -> str:
+    if not isinstance(row, Mapping):
+        return ""
+    value = row.get("scope_key")
+    if isinstance(value, str) and value:
+        return value
+    return scope_key(row.get("applies_to"))
+
+
+def _scope_compatible(row: Any, wanted: str) -> bool:
+    """A row with no recorded scope stays eligible in every scope."""
+    mine = _row_scope_key(row)
+    if not mine or not wanted:
+        return True
+    return mine == wanted
+
+
+def reflection_id_from_topic(
+    topic: Any, applies_to: Any = None, text: Any = "",
+) -> str:
+    """Content-addressed reflection id: topic + scope + exact text hash.
+
+    The old id hashed the batch's fact ids, so every new batch produced a new
+    row and two synonymous understandings could never meet. Addressing by
+    content keeps re-synthesizing the same understanding idempotent (same
+    topic, same scope, same text -> same id) while leaving room for one topic
+    to hold several different understandings.
+    """
+    seed = "|".join((
+        topic_key(topic) or "tp_unspecified",
+        scope_key(applies_to) or "sc_shared",
+        text_hash(text),
+    ))
+    return "ref_" + hashlib.sha1(seed.encode("utf-8", "replace")).hexdigest()[:16]
 
 
 def reflection_id_from_facts(source_fact_ids: Sequence[str]) -> str:
@@ -394,48 +630,34 @@ def _row_source_keys(row: Mapping[str, Any]) -> set[str]:
 
 
 def _apply_support_removal(
-    row: dict[str, Any], invalidated_keys: set[str], *, now_iso: str,
+    row: dict[str, Any],
+    invalidated_keys: set[str],
+    *,
+    now_iso: str,
+    invalidated_fact_ids: Sequence[str] = (),
+    min_support: int = 2,
 ) -> bool:
-    """Host `apply_support_removal`: drop lost support, withdraw/narrow."""
-    if not invalidated_keys:
-        return False
-    support = [
-        str(key) for key in row.get("support_event_keys") or ()
-        if isinstance(key, str) and key
-    ]
-    kept = [key for key in support if key not in invalidated_keys]
-    if len(kept) == len(support):
-        return False
-    removed = {key for key in support if key in invalidated_keys}
-    row["support_event_keys"] = kept
-    row["support_count"] = len(kept)
-    evidence = row.get("support_evidence")
-    buckets: dict[str, list[str]] = {}
-    if isinstance(evidence, Mapping):
-        for flag in EVIDENCE_FLAGS:
-            buckets[flag] = [
-                key for key in evidence.get(flag) or ()
-                if isinstance(key, str) and key not in removed
-            ]
-    else:
-        buckets = {flag: [] for flag in EVIDENCE_FLAGS}
-    row["support_evidence"] = buckets
-    row["source_event_keys"] = [
-        key for key in row.get("source_event_keys") or ()
-        if isinstance(key, str) and key not in removed
-    ]
-    row["updated_at"] = now_iso
-    min_support = 2
-    status = str(row.get("status") or "pending")
-    if not kept:
-        row["status"] = "withdrawn"
-        row["withdrawn_at"] = now_iso
-        row["withdrawn_reason"] = "sources_deleted"
-    elif len(kept) < min_support and status in ("confirmed", "promoted", "narrowed"):
-        row["status"] = "narrowed"
-        row["narrowed_at"] = now_iso
-        row["narrowed_reason"] = "sources_reduced"
-    return True
+    """Drop lost support and recompute count/flags/maturity by the M4 rule.
+
+    This used to recompute `support_count = len(kept)`, i.e. one support per
+    retained evidence key, while creation counted one support per independent
+    experience. Counted per episode when writing and per message when deleting,
+    the gate drifts twice: a row could be promoted on one conversation and then
+    survive a deletion that removed its only experience. The recompute is now the
+    very same routine used to build the support basis in the first place
+    (`domain.growth_evidence.apply_support_removal_to_row`): the removed keys and
+    deleted fact ids are dropped from the stored basis, then the count, the
+    evidence flags and the row's support fields are derived from what is left.
+    The deletion-barrier semantics are unchanged: no support left -> withdrawn,
+    below the growth gate -> narrowed.
+    """
+    return apply_support_removal_to_row(
+        row,
+        invalidated_keys,
+        invalidated_fact_ids=invalidated_fact_ids,
+        now_iso=now_iso,
+        min_support=min_support,
+    )
 
 
 # -- service -----------------------------------------------------------------
@@ -608,7 +830,21 @@ class ReflectionService:
     # -- synthesis ------------------------------------------------------
 
     async def synthesize(self, character: str) -> SynthesisOutcome:
-        """Synthesize one reflection from the unabsorbed facts, if due."""
+        """Apply one local operation to the existing understandings, if due.
+
+        The model now sees the related old understandings and the strategies
+        already adopted, and answers with exactly one operation (design
+        section 7.2). The three outcomes are not the same thing:
+
+        * `no_change` - the batch was evaluated and nothing new is worth
+          recording. No row is written, no backoff is consumed, and the batch
+          is marked settled so it is not re-evaluated until new evidence
+          arrives (see `_mark_no_change`);
+        * `completed` - one operation was applied (a row added, or an existing
+          row reinforced / refined / retired by supersede, contradict, split);
+        * `failed` - transport, parse or shape failure. This is the only path
+          that consumes the synthesis backoff.
+        """
         character = self._character(character)
         settings = self._settings
         with self._lock_for(character):
@@ -625,29 +861,26 @@ class ReflectionService:
                 and not self._dead_letter_healed(entry)
             ):
                 return SynthesisOutcome("skipped", reason="dead_letter")
+            if self._no_change_settled(entry):
+                # This exact evidence batch already reported "nothing new".
+                # No model call: the marker lives on the backoff entry, whose
+                # key is the full unabsorbed id set, so new evidence lands on
+                # a different key and is evaluated normally.
+                return SynthesisOutcome(
+                    "no_change", reason="already_settled", operation="no_change",
+                )
             capped = self._cap_facts(unabsorbed)
             source_fact_ids = sorted(str(fact["id"]) for fact in capped)
-            reflection_id = reflection_id_from_facts(source_fact_ids)
             rows = self._store.load(character)
-            existing = _find_row(rows, reflection_id)
-            if existing is not None:
-                absorbed = self._mark_absorbed(character, source_fact_ids)
-                self._clear_backoff(character, backoff_key)
-                growth_ids = (
-                    (str(existing.get("id")),)
-                    if existing.get("memory_kind") in MEMORY_KINDS else ()
-                )
-                return SynthesisOutcome(
-                    "duplicate", reflection_ids=(reflection_id,),
-                    absorbed_fact_ids=tuple(absorbed),
-                    growth_item_ids=growth_ids,
-                    reason="already_synthesized",
-                )
+            topic = self._batch_topic(capped)
+            scene = self._batch_scene(capped)
+            candidates = self._candidate_rows(rows, topic, capped)
+            strategies = self._prompt_strategies(rows)
             if self._model is None:
                 self._bump_backoff(character, backoff_key)
                 return SynthesisOutcome("failed", reason="model_unavailable")
             snapshot = self._barrier.snapshot(character)
-            prompt = _build_synthesis_prompt(capped)
+            prompt = _build_synthesis_prompt(capped, candidates, strategies)
         try:
             raw = await self._model.invoke(
                 settings.model_tier,
@@ -665,11 +898,26 @@ class ReflectionService:
         if parsed is None:
             self._bump_backoff(character, backoff_key)
             return SynthesisOutcome("failed", reason="parse")
-        text = parsed.get("reflection")
-        if not isinstance(text, str) or not text.strip():
-            self._bump_backoff(character, backoff_key)
-            return SynthesisOutcome("failed", reason="empty_reflection")
-        text = text.strip()[:MAX_REFLECTION_TEXT]
+        operation = operation_of(parsed.get("operation"))
+        raw_text = parsed.get("reflection")
+        text = (
+            raw_text.strip()[:MAX_REFLECTION_TEXT]
+            if isinstance(raw_text, str) else ""
+        )
+        if not operation:
+            # A model that names no operation but produces an understanding is
+            # asking for a plain add; one that produces nothing is reporting
+            # no_change. Neither is an error (the old code called both failed).
+            operation = "add" if text else "no_change"
+        if operation == "no_change" or not text:
+            with self._lock_for(character):
+                self._mark_no_change(character, backoff_key)
+            return SynthesisOutcome(
+                "no_change",
+                absorbed_fact_ids=(),
+                reason="nothing_new",
+                operation="no_change",
+            )
 
         with self._lock_for(character):
             try:
@@ -677,14 +925,6 @@ class ReflectionService:
             except BarrierStaleError:
                 return SynthesisOutcome("stale", reason="barrier_stale")
             rows = self._store.load(character)
-            existing = _find_row(rows, reflection_id)
-            if existing is not None:
-                absorbed = self._mark_absorbed(character, source_fact_ids)
-                self._clear_backoff(character, backoff_key)
-                return SynthesisOutcome(
-                    "duplicate", reflection_ids=(reflection_id,),
-                    absorbed_fact_ids=tuple(absorbed), reason="already_synthesized",
-                )
             # The model may have rewritten the batch; only facts that still
             # exist and are not tombstoned may become sources.
             current = {
@@ -698,32 +938,592 @@ class ReflectionService:
             ]
             if len(usable) < settings.min_facts_for_reflection:
                 return SynthesisOutcome("skipped", reason="sources_deleted")
+            # Only maintenance operations retire an existing understanding.
+            # A plain add must never touch one: two different understandings
+            # under the same topic have to coexist (design section 7.2).
+            evidence_text = " ".join(
+                str(fact.get("text") or "") for fact in capped
+            )
+            declared_topic = _bounded(parsed.get("topic"), MAX_TOPIC_CHARS) or topic
+            target = (
+                self._resolve_target(
+                    character, rows, parsed, evidence_text, text,
+                    declared_topic, scene, candidates,
+                )
+                if operation in _MAINTENANCE_OPERATIONS else None
+            )
+            if target is None and operation in _MAINTENANCE_OPERATIONS:
+                # Nothing to maintain: the honest fallback is a plain add.
+                operation = "add"
+            topic_value = _bounded(parsed.get("topic"), MAX_TOPIC_CHARS) or topic
+            if operation == "split":
+                return self._apply_split(
+                    character, rows, parsed, usable, capped, text,
+                    topic_value, scene, backoff_key,
+                )
+            if operation in ("reinforce", "refine") and target is not None:
+                return self._apply_maintain(
+                    character, rows, target, operation, parsed, text,
+                    usable, capped, scene, backoff_key,
+                )
+            return self._apply_new(
+                character, rows, parsed, text, operation, usable, capped,
+                topic_value, scene, target, backoff_key,
+            )
+
+    # -- operation helpers ----------------------------------------------
+
+    @staticmethod
+    def _batch_topic(facts: Sequence[Mapping[str, Any]]) -> str:
+        """Stable per-batch topic: the shared subject, else private.
+
+        The topic is a *grouping* key, never a uniqueness constraint: one topic
+        may hold several different understandings (design section 7.2). It only
+        decides which existing rows are shown to the model together.
+        """
+        subjects = {
+            _bounded(fact.get("subject"), 64)
+            for fact in facts
+            if _bounded(fact.get("subject"), 64)
+        }
+        if len(subjects) == 1:
+            return subjects.pop()
+        return "private"
+
+    @staticmethod
+    def _batch_scene(facts: Sequence[Mapping[str, Any]]) -> dict[str, str]:
+        for fact in facts:
+            scene = fact.get("applies_to")
+            if isinstance(scene, Mapping) and scene:
+                return _normalize_scene(scene)
+        return {}
+
+    def _candidate_rows(
+        self,
+        rows: Sequence[Mapping[str, Any]],
+        topic: str,
+        facts: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Existing understandings worth showing the model for this batch.
+
+        Deterministic and scope-constrained: active rows only, ranked by
+        same-topic, then term overlap with the batch, then recency.
+        """
+        wanted_topic = topic_key(topic)
+        batch_text = " ".join(str(fact.get("text") or "") for fact in facts)
+        scored: list[tuple[float, str, dict[str, Any]]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("status") or "") not in REFLECTION_ACTIVE_STATUSES:
+                continue
+            if row.get("needs_rebuild"):
+                continue
+            text = str(row.get("text") or "").strip()
+            if not text:
+                continue
+            same_topic = bool(wanted_topic) and (
+                topic_key(row.get("topic") or "") == wanted_topic
+            )
+            overlap = _semantic_overlap(text, batch_text)
+            if not same_topic and overlap <= 0.0:
+                continue
+            scored.append((
+                (2.0 if same_topic else 0.0) + overlap,
+                str(row.get("created_at") or ""),
+                dict(row),
+            ))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [item[2] for item in scored[: MAX_PROMPT_OLD_ROWS]]
+
+    @staticmethod
+    def _prompt_strategies(
+        rows: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Strategies already adopted: confirmed or promoted growth rows."""
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if row.get("memory_kind") not in MEMORY_KINDS:
+                continue
+            if str(row.get("status") or "") not in ("confirmed", "promoted"):
+                continue
+            if row.get("needs_rebuild"):
+                continue
+            out.append(dict(row))
+        out.sort(
+            key=lambda item: (
+                -_as_int(item.get("support_count"), 0),
+                str(item.get("updated_at") or ""),
+            ),
+        )
+        return out[:MAX_PROMPT_STRATEGIES]
+
+    def _resolve_target(
+        self,
+        character: str,
+        rows: Sequence[Mapping[str, Any]],
+        parsed: Mapping[str, Any],
+        evidence_text: str,
+        text: str,
+        topic: str,
+        scene: Mapping[str, str],
+        candidates: Sequence[Mapping[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Pick the row an operation applies to, scope-constrained.
+
+        The fallback scores candidates against the incoming *evidence*, never
+        against the freshly written wording: supersede and contradict word the
+        new understanding differently on purpose, so comparing the two
+        sentences finds nothing. (The old tea/oolong probe scored exactly 0.0
+        that way and the stale row was never retired.)
+
+        An explicit `target_reflection_id` from the model is honoured only when
+        the row exists, is active, is not blocked by the deletion barrier, and
+        shares the topic or the scope. Otherwise a deterministic fallback picks
+        the best semantic candidate, and a batch that matches nothing becomes a
+        plain add.
+        """
+        wanted_scope = scope_key(scene)
+        wanted_id = _bounded(parsed.get("target_reflection_id"), 64)
+        if wanted_id:
+            row = _find_row(rows, wanted_id)
+            if (
+                row is not None
+                and str(row.get("status") or "") in _TARGET_STATUSES
+                and not row.get("needs_rebuild")
+                and not self._barrier.blocks_row(character, row)
+            ):
+                same_topic = topic_key(row.get("topic") or "") == topic_key(topic)
+                if same_topic or _scope_compatible(row, wanted_scope):
+                    return row
+            return None
+        best: tuple[float, dict[str, Any]] | None = None
+        for row in candidates:
+            if not isinstance(row, Mapping):
+                continue
+            if not _scope_compatible(row, wanted_scope):
+                continue
+            score = max(
+                _semantic_overlap(str(row.get("text") or ""), evidence_text),
+                _semantic_overlap(str(row.get("text") or ""), text),
+            )
+            if best is None or score > best[0]:
+                best = (score, dict(row))
+        # Topic grouping first: the topic key is what tells the code that two
+        # differently-worded rows are about the same thing. Semantic overlap
+        # only disambiguates when one topic holds several understandings.
+        wanted_topic = topic_key(topic)
+        same_topic: list[dict[str, Any]] = []
+        if wanted_topic:
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                if str(row.get("status") or "") not in _TARGET_STATUSES:
+                    continue
+                if row.get("needs_rebuild"):
+                    continue
+                if not _scope_compatible(row, wanted_scope):
+                    continue
+                if topic_key(row.get("topic") or "") == wanted_topic:
+                    same_topic.append(dict(row))
+        if len(same_topic) == 1:
+            # The batch is about one topic that already holds exactly one
+            # understanding: that is the row the operation maintains, even if
+            # the new wording shares almost no terms with the old one ("used to
+            # drink black tea" vs "drinks oolong now" is zero-overlap text).
+            return same_topic[0]
+        if len(same_topic) > 1:
+            ranked = sorted(
+                same_topic,
+                key=lambda row: -max(
+                    _semantic_overlap(str(row.get("text") or ""), evidence_text),
+                    _semantic_overlap(str(row.get("text") or ""), text),
+                ),
+            )
+            return ranked[0]
+        if best is None or best[0] < SEMANTIC_MATCH_MIN:
+            return None
+        return best[1]
+
+    def _apply_new(
+        self,
+        character: str,
+        rows: list[dict[str, Any]],
+        parsed: Mapping[str, Any],
+        text: str,
+        operation: str,
+        usable: Sequence[str],
+        facts: Sequence[Mapping[str, Any]],
+        topic: str,
+        scene: Mapping[str, str],
+        target: dict[str, Any] | None,
+        backoff_key: str,
+    ) -> SynthesisOutcome:
+        """add / supersede / contradict: write a new row, retire the target."""
+        scene_map = _normalize_scene(scene) or _normalize_scene(
+            parsed.get("applies_to"),
+        )
+        reflection_id = reflection_id_from_topic(topic, scene_map, text)
+        existing = _find_row(rows, reflection_id)
+        if existing is not None:
+            absorbed = self._mark_absorbed(character, usable)
+            self._clear_backoff(character, backoff_key)
+            growth_ids = (
+                (str(existing.get("id")),)
+                if existing.get("memory_kind") in MEMORY_KINDS else ()
+            )
+            return SynthesisOutcome(
+                "duplicate", reflection_ids=(reflection_id,),
+                absorbed_fact_ids=tuple(absorbed),
+                growth_item_ids=growth_ids,
+                reason="already_synthesized",
+                operation=operation,
+            )
+        row = self._new_reflection_row(
+            reflection_id, usable, facts, parsed, text,
+            topic=topic, scene=scene_map, operation=operation,
+        )
+        if target is not None:
+            row["supersedes"] = [str(target.get("id"))]
+        try:
+            self._barrier.assert_row_allowed(character, row)
+        except ContentBlockedError:
+            return SynthesisOutcome("stale", reason="blocked_row")
+        growth_ids: tuple[str, ...] = ()
+        candidate = self._growth_candidate(parsed, usable, facts, text)
+        appended = False
+        if candidate is not None:
+            growth_ids, appended = self._merge_or_append_growth(
+                character, rows, row, candidate,
+            )
+        else:
+            rows.append(row)
+            appended = True
+        self._store.save(character, rows)
+        absorbed = self._mark_absorbed(character, usable)
+        self._clear_backoff(character, backoff_key)
+        # Retirement runs after the save on purpose: it re-loads the view, so
+        # retiring first and writing the local rows afterwards would silently
+        # drop the status change (the old row stayed active and kept rendering).
+        retired: list[str] = []
+        if target is not None:
+            retired = self._retire_target(character, target, operation, row)
+        return SynthesisOutcome(
+            "completed",
+            reflection_ids=(reflection_id,) if appended else (),
+            absorbed_fact_ids=tuple(absorbed),
+            growth_item_ids=growth_ids,
+            reason=None if not retired else "retired:" + ",".join(retired),
+            operation=operation,
+        )
+
+    def _apply_maintain(
+        self,
+        character: str,
+        rows: list[dict[str, Any]],
+        target: dict[str, Any],
+        operation: str,
+        parsed: Mapping[str, Any],
+        text: str,
+        usable: Sequence[str],
+        facts: Sequence[Mapping[str, Any]],
+        scene: Mapping[str, str],
+        backoff_key: str,
+    ) -> SynthesisOutcome:
+        """reinforce (same understanding, more support) or refine (narrow it)."""
+        target_id = str(target.get("id"))
+        now_iso = _now_iso(self._clock.now())
+        sources = [
+            str(item) for item in target.get("source_fact_ids") or ()
+            if isinstance(item, str)
+        ]
+        for fact_id in usable:
+            if fact_id not in sources and len(sources) < MAX_SOURCE_KEYS:
+                sources.append(fact_id)
+        target["source_fact_ids"] = sources
+        if operation == "refine":
+            # Keep the previous wording so the change stays auditable.
+            history: list[str] = [
+                str(item) for item in target.get("previous_texts") or ()
+                if isinstance(item, str)
+            ]
+            old_text = str(target.get("text") or "")
+            if old_text and old_text != text:
+                history.append(old_text)
+            target["previous_texts"] = history[-MAX_REFINE_HISTORY:]
+            target["text"] = text
+            target["refined_at"] = now_iso
+            narrowed = _normalize_scene(parsed.get("applies_to")) or _normalize_scene(scene)
+            if narrowed:
+                target["applies_to"] = narrowed
+                target["scope_key"] = scope_key(narrowed)
+            new_topic = _bounded(parsed.get("topic"), MAX_TOPIC_CHARS)
+            if new_topic:
+                target["topic"] = new_topic
+        if target.get("memory_kind") in MEMORY_KINDS:
+            # Reinforce/refine advances support by *independent experience*, the
+            # same unit the creation path and the deletion recompute use. Adding
+            # one key per message would let a single conversation clear the
+            # two-experience gate.
+            merged = merge_basis(
+                support_basis_from_row(target),
+                support_basis_from_facts(list(facts)),
+            )
+            target.update(summarize_basis(merged))
+            if (
+                str(target.get("status") or "") in ("pending", "narrowed")
+                and self._growth_promotion_ready(target)
+            ):
+                target["status"] = "confirmed"
+                target["confirmed_at"] = now_iso
+        target["updated_at"] = now_iso
+        self._store.save(character, rows)
+        self._record_evidence(
+            character,
+            target_id,
+            {
+                "reinforcement": _as_float(target.get("reinforcement"), 0.0)
+                + REINFORCE_DELTA,
+                "rein_last_signal_at": now_iso,
+            },
+        )
+        absorbed = self._mark_absorbed(character, usable)
+        self._clear_backoff(character, backoff_key)
+        growth_ids = (
+            (target_id,) if target.get("memory_kind") in MEMORY_KINDS else ()
+        )
+        return SynthesisOutcome(
+            "completed",
+            reflection_ids=(target_id,),
+            absorbed_fact_ids=tuple(absorbed),
+            growth_item_ids=growth_ids,
+            operation=operation,
+        )
+
+    def _apply_split(
+        self,
+        character: str,
+        rows: list[dict[str, Any]],
+        parsed: Mapping[str, Any],
+        usable: Sequence[str],
+        facts: Sequence[Mapping[str, Any]],
+        text: str,
+        topic: str,
+        scene: Mapping[str, str],
+        backoff_key: str,
+    ) -> SynthesisOutcome:
+        """Split one over-broad understanding into independently supported rows.
+
+        Every part keeps its *own* source_fact_ids: parts must not share one
+        support set, otherwise per-experience counting would count the same
+        experience once per part (design section 7.4).
+        """
+        parts: list[tuple[str, dict[str, str]]] = []
+        raw_parts = parsed.get("parts")
+        if isinstance(raw_parts, (list, tuple)):
+            for item in raw_parts:
+                if isinstance(item, Mapping):
+                    part_text = _bounded(item.get("reflection"), MAX_REFLECTION_TEXT)
+                    part_scene = _normalize_scene(item.get("applies_to")) or dict(scene)
+                else:
+                    part_text = _bounded(item, MAX_REFLECTION_TEXT)
+                    part_scene = dict(scene)
+                if part_text:
+                    parts.append((part_text, part_scene))
+        if len(parts) < 2:
+            return SynthesisOutcome(
+                "skipped", reason="split_needs_two_parts", operation="split",
+            )
+        fact_by_id = {
+            str(fact.get("id")): fact for fact in facts
+            if isinstance(fact.get("id"), str)
+        }
+        assigned: list[list[str]] = [[] for _ in parts]
+        for fact_id in usable:
+            fact = fact_by_id.get(fact_id)
+            fact_text = str((fact or {}).get("text") or "")
+            best_index = 0
+            best_score = -1.0
+            for index, (part_text, _scene) in enumerate(parts):
+                score = _semantic_overlap(fact_text, part_text)
+                if score > best_score:
+                    best_score = score
+                    best_index = index
+            assigned[best_index].append(fact_id)
+        created: list[str] = []
+        absorbed: list[str] = []
+        for index, (part_text, part_scene) in enumerate(parts):
+            part_sources = list(assigned[index])
+            if not part_sources:
+                # An unsupported part is skipped, never given a borrowed set.
+                continue
+            part_id = reflection_id_from_topic(topic, part_scene, part_text)
+            if _find_row(rows, part_id) is not None:
+                continue
+            part_facts = [
+                fact_by_id[item] for item in part_sources if item in fact_by_id
+            ]
             row = self._new_reflection_row(
-                reflection_id, usable, capped, parsed, text,
+                part_id, part_sources, part_facts, parsed, part_text,
+                topic=topic, scene=part_scene, operation="split",
             )
             try:
                 self._barrier.assert_row_allowed(character, row)
             except ContentBlockedError:
-                return SynthesisOutcome("stale", reason="blocked_row")
-            growth_ids: tuple[str, ...] = ()
-            candidate = self._growth_candidate(parsed, usable, capped, text)
-            appended = False
-            if candidate is not None:
-                growth_ids, appended = self._merge_or_append_growth(
-                    character, rows, row, candidate,
-                )
-            else:
-                rows.append(row)
-                appended = True
-            self._store.save(character, rows)
-            absorbed = self._mark_absorbed(character, usable)
-            self._clear_backoff(character, backoff_key)
+                continue
+            rows.append(row)
+            created.append(part_id)
+            absorbed.extend(part_sources)
+        if not created:
             return SynthesisOutcome(
-                "completed",
-                reflection_ids=(reflection_id,) if appended else (),
-                absorbed_fact_ids=tuple(absorbed),
-                growth_item_ids=growth_ids,
+                "skipped", reason="split_no_eligible_parts", operation="split",
             )
+        self._store.save(character, rows)
+        marked = self._mark_absorbed(character, sorted(set(absorbed)))
+        self._clear_backoff(character, backoff_key)
+        return SynthesisOutcome(
+            "completed",
+            reflection_ids=tuple(created),
+            absorbed_fact_ids=tuple(marked),
+            reason="split:" + str(len(created)),
+            operation="split",
+        )
+
+    def _retire_target(
+        self,
+        character: str,
+        target: dict[str, Any],
+        operation: str,
+        new_row: Mapping[str, Any],
+    ) -> list[str]:
+        """Retire an understanding the new evidence replaced or contradicted.
+
+        `superseded` is used, never `withdrawn`: `withdrawn` means "the sources went
+        away" and is what the deletion/correction barrier writes, whereas this
+        is a content judgement recorded next to the new row. A contradicting
+        batch also raises `disputation`, so the maturity model keeps the
+        counter-evidence instead of only flipping a status.
+        """
+        target_id = str(target.get("id"))
+        new_id = str(new_row.get("id") or "")
+        reason = (
+            CONTRADICT_REASON if operation == "contradict" else SUPERSEDE_REASON
+        )
+        if operation == "contradict":
+            self._record_evidence(
+                character,
+                target_id,
+                {
+                    "disputation": _as_float(target.get("disputation"), 0.0)
+                    + CONTRADICTION_DELTA,
+                    "disp_last_signal_at": _now_iso(self._clock.now()),
+                },
+            )
+        status = str(target.get("status") or "pending")
+        if status in _TARGET_STATUSES:
+            self._retire_superseded(character, target_id, status, new_id, reason)
+        retired = [target_id]
+        # Already materialised into the persona card? Then the derived persona
+        # entry has to be retracted too, otherwise the retired understanding
+        # keeps shaping replies through the persona block.
+        retired.extend(self._retract_persona_for_reflection(
+            character, target_id, reason,
+        ))
+        if target.get("memory_kind") in MEMORY_KINDS:
+            self._retire_growth_target(character, target_id, reason)
+            retired.extend(self._retract_persona_for_growth(
+                character, target_id, reason,
+            ))
+        return retired
+
+    def _retire_superseded(
+        self,
+        character: str,
+        reflection_id: str,
+        from_status: str,
+        superseded_by: str,
+        reason: str,
+    ) -> bool:
+        """Status transition to `superseded`, journaled like any state change."""
+        now_iso = _now_iso(self._clock.now())
+        payload: dict[str, Any] = {
+            "reflection_id": reflection_id,
+            "from": from_status,
+            "to": "superseded",
+            "ts": now_iso,
+            "reason": reason,
+            "superseded_by": superseded_by,
+        }
+        applied = {"ok": False}
+
+        def _mutate(view: Any) -> None:
+            row = _find_row(view, reflection_id)
+            if row is None or str(row.get("status") or "") != from_status:
+                return
+            row["status"] = "superseded"
+            row["superseded_at"] = now_iso
+            row["superseded_by"] = superseded_by
+            row["superseded_reason"] = reason
+            applied["ok"] = True
+
+        self._journal.record_and_save(
+            character,
+            EVT_REFLECTION_STATE_CHANGED,
+            payload,
+            load_view=self._store.load,
+            mutate_view=_mutate,
+            save_view=self._store.save,
+        )
+        return bool(applied["ok"])
+
+    def _retire_growth_target(
+        self, character: str, item_id: str, reason: str,
+    ) -> None:
+        """Withdraw the derived growth item so it stops rendering as a strategy."""
+        rows = self._store.load(character)
+        row = _find_row(rows, item_id)
+        if row is None or row.get("memory_kind") not in MEMORY_KINDS:
+            return
+        if str(row.get("status") or "") in GROWTH_TERMINAL_STATUSES:
+            return
+        now_iso = _now_iso(self._clock.now())
+        row["status"] = "withdrawn"
+        row["withdrawn_at"] = now_iso
+        row["withdrawn_reason"] = reason
+        row["updated_at"] = now_iso
+        self._store.save(character, rows)
+        doc = self._store.load_growth_uses(character)
+        doc["version"] = _as_int(doc.get("version"), 0) + 1
+        self._store.save_growth_uses(character, doc)
+
+    # -- no_change marker -------------------------------------------------
+
+    @staticmethod
+    def _no_change_settled(entry: Mapping[str, Any]) -> bool:
+        """Whether this exact evidence batch already reported no_change.
+
+        The marker rides on the synthesis backoff entry, whose key is a hash of
+        the full unabsorbed fact id set. That is the whole trick: new evidence
+        changes the id set, so the key changes, so the entry (and its marker)
+        no longer applies and the batch is evaluated again. It also means the
+        marker needs no extra file, no extra replay handler and no special
+        deletion invalidation: once the sources are gone the key no longer
+        matches anything.
+        """
+        return bool(entry.get("nc"))
+
+    def _mark_no_change(self, character: str, key: str) -> None:
+        """Record "this batch is settled"; deliberately keeps n at zero."""
+        doc = self._store.load_backoff(character)
+        doc[key] = {
+            "n": 0,
+            "at": None,
+            "nc": key,
+            "nc_at": _now_iso(self._clock.now()),
+        }
+        self._store.save_backoff(character, doc)
 
     def _unabsorbed_facts(self, character: str) -> list[dict[str, Any]]:
         facts = self._facts.load(character)
@@ -760,6 +1560,10 @@ class ReflectionService:
         facts: Sequence[Mapping[str, Any]],
         parsed: Mapping[str, Any],
         text: str,
+        *,
+        topic: Any = None,
+        scene: Any = None,
+        operation: str | None = None,
     ) -> dict[str, Any]:
         now = self._clock.now()
         now_iso = _now_iso(now)
@@ -817,6 +1621,20 @@ class ReflectionService:
             "embedding_model_id": None,
             "last_refine_cluster_hash": None,
             "last_refine_at": None,
+            "topic": _bounded(parsed.get("topic"), MAX_TOPIC_CHARS) or (
+                _bounded(topic, MAX_TOPIC_CHARS) or None
+            ),
+            "topic_key": topic_key(
+                _bounded(parsed.get("topic"), MAX_TOPIC_CHARS) or topic
+            ),
+            "scope_key": scope_key(scene),
+            "applies_to": _normalize_scene(scene),
+            "operation": operation,
+            "superseded_by": None,
+            "superseded_at": None,
+            "superseded_reason": None,
+            "supersedes": None,
+            "previous_texts": [],
         }
         for key in (
             "speaker_id", "speaker_trust", "speaker_label",
@@ -854,21 +1672,20 @@ class ReflectionService:
                 if isinstance(scene, Mapping) and scene:
                     applies_to = _normalize_scene(scene)
                     break
-        keys: list[str] = []
-        for fact in facts:
-            for key in fact.get("source_event_keys") or ():
-                if isinstance(key, str) and key.strip():
-                    key = key.strip()[:600]
-                    if key not in keys and len(keys) < MAX_SOURCE_KEYS:
-                        keys.append(key)
+        # Support is one slot per *independent experience* (episode), not one
+        # per message: five facts of one conversation are one experience
+        # (design section 7.4, G09).
+        basis = support_basis_from_facts(list(facts))
+        summary = summarize_basis(basis)
         return {
             "kind": kind,
             "claim": claim,
             "situation": situation,
             "applies_to": applies_to,
             "growth_key": growth_key(kind, claim, situation, applies_to),
-            "source_event_keys": keys,
+            "source_event_keys": list(summary["support_event_keys"]),
             "source_fact_ids": [str(item) for item in source_fact_ids],
+            "support_basis": basis,
         }
 
     def _merge_or_append_growth(
@@ -891,65 +1708,42 @@ class ReflectionService:
                 target = item
                 break
         now_iso = _now_iso(self._clock.now())
-        keys = list(candidate.get("source_event_keys") or ())
+        basis = list(candidate.get("support_basis") or ())
         if target is None:
-            support = list(keys)
             row["memory_kind"] = candidate["kind"]
             row["claim"] = candidate["claim"]
             row["situation"] = candidate["situation"]
             row["applies_to"] = dict(candidate.get("applies_to") or {})
             row["growth_key"] = key
-            row["support_event_keys"] = support
-            row["support_count"] = len(support)
-            row["support_evidence"] = {
-                flag: (list(support) if flag == "actual_result" else [])
-                for flag in EVIDENCE_FLAGS
-            }
-            row["source_event_keys"] = list(support)
+            # The evidence flags come from each fact's real `evidence_kind`, so
+            # a batch of bare user statements can no longer satisfy the
+            # `actual_result`/`user_feedback` gates on its own.
+            row.update(summarize_basis(basis))
             row["valid_from"] = now_iso
             row["superseded_by"] = None
             rows.append(row)
             return (str(row["id"]),), True
-        # Existing independent experience: only new source keys add support.
-        support = [
-            str(item) for item in target.get("support_event_keys") or ()
+        # Merge by experience: re-synthesizing the same evidence adds nothing,
+        # a genuinely new conversation adds exactly one support.
+        merged = merge_basis(support_basis_from_row(target), basis)
+        after = summarize_basis(merged)
+        # Only *new fact ids* count as a change: a retry that re-synthesizes the
+        # same evidence must not touch the row (design 7.4, "re-synthesis adds no
+        # support"), while a new independent experience must.
+        source_facts = [
+            str(item) for item in target.get("source_fact_ids") or ()
             if isinstance(item, str)
         ]
-        added = [key for key in keys if key not in support][: MAX_SOURCE_KEYS - len(support)]
-        if added:
-            support.extend(added)
-            target["support_event_keys"] = support[:MAX_SOURCE_KEYS]
-            target["support_count"] = len(target["support_event_keys"])
-            evidence = target.get("support_evidence")
-            buckets: dict[str, list[str]] = {}
-            if isinstance(evidence, Mapping):
-                for flag in EVIDENCE_FLAGS:
-                    buckets[flag] = [
-                        str(item) for item in evidence.get(flag) or ()
-                        if isinstance(item, str)
-                    ]
-            else:
-                buckets = {flag: [] for flag in EVIDENCE_FLAGS}
-            for key in added:
-                if key not in buckets["actual_result"]:
-                    buckets["actual_result"].append(key)
-            target["support_evidence"] = buckets
-            source_keys = [
-                str(item) for item in target.get("source_event_keys") or ()
-                if isinstance(item, str)
-            ]
-            for key in added:
-                if key not in source_keys and len(source_keys) < MAX_SOURCE_KEYS:
-                    source_keys.append(key)
-            target["source_event_keys"] = source_keys
-            source_facts = [
-                str(item) for item in target.get("source_fact_ids") or ()
-                if isinstance(item, str)
-            ]
-            for fact_id in candidate.get("source_fact_ids") or ():
-                if fact_id not in source_facts and len(source_facts) < MAX_SOURCE_KEYS:
-                    source_facts.append(str(fact_id))
+        fresh = [
+            str(item) for item in candidate.get("source_fact_ids") or ()
+            if isinstance(item, str) and item not in source_facts
+        ]
+        if fresh:
+            for fact_id in fresh:
+                if len(source_facts) < MAX_SOURCE_KEYS:
+                    source_facts.append(fact_id)
             target["source_fact_ids"] = source_facts
+            target.update(after)
             target["updated_at"] = now_iso
             if (
                 str(target.get("status") or "") in ("pending", "narrowed")
@@ -1108,21 +1902,22 @@ class ReflectionService:
         )
 
     def _growth_promotion_ready(self, row: Mapping[str, Any]) -> bool:
+        """Gate: independent experiences + one evidence flag of the right kind.
+
+        The count and the flags are read from the row's support basis rather than
+        from a stored counter, so a legacy row cannot pass on a `support_count`
+        that was inflated per message, and a row whose evidence was filed under a
+        made-up `actual_result` cannot pass either.
+        """
         kind = str(row.get("memory_kind") or "")
-        required = PROMOTION_RULES.get(kind)
-        if required is None:
+        if kind not in MEMORY_KINDS:
             return False
-        support = _as_int(row.get("support_count"), 0)
-        if support < self._settings.growth_min_support:
-            return False
-        evidence = row.get("support_evidence")
-        if not isinstance(evidence, Mapping):
-            return False
-        for flag in required:
-            bucket = evidence.get(flag)
-            if isinstance(bucket, (list, tuple)) and bucket:
-                return True
-        return False
+        maturity = maturity_of_row(
+            row,
+            promotion_rules=PROMOTION_RULES,
+            min_support=int(self._settings.growth_min_support),
+        )
+        return bool(maturity["promotion_ready"])
 
     @staticmethod
     def _reflection_persona_row(
@@ -1561,7 +2356,11 @@ class ReflectionService:
                 return {
                     "ok": True,
                     "duplicate": True,
-                    "item": _growth_explanation(row, version),
+                    "item": _growth_explanation(
+                        row, version,
+                        promotion_rules=PROMOTION_RULES,
+                        min_support=int(self._settings.growth_min_support),
+                    ),
                     "version": version,
                     "persona_retracted": self._retract_persona_for_growth(
                         character, item_id, "user_retract",
@@ -1579,7 +2378,11 @@ class ReflectionService:
             return {
                 "ok": True,
                 "duplicate": False,
-                "item": _growth_explanation(row, version + 1),
+                "item": _growth_explanation(
+                    row, version + 1,
+                    promotion_rules=PROMOTION_RULES,
+                    min_support=int(self._settings.growth_min_support),
+                ),
                 "version": version + 1,
                 "persona_retracted": self._retract_persona_for_growth(
                     character, item_id, row["withdrawn_reason"],
@@ -1592,13 +2395,20 @@ class ReflectionService:
         with self._lock_for(character):
             rows = self._store.load(character)
             invalidated_keys = set(self._barrier.state(character).index.source_keys)
+            # A corrected/deleted fact also invalidates by *id*, so an experience
+            # whose only fact went away is dropped even when its key is still
+            # referenced by something else.
+            invalidated_fact_ids: set[str] = set()
             for fact in self._facts.load(character):
                 if not isinstance(fact, dict) or not fact.get("invalidated_at"):
                     continue
+                fact_id = fact.get("id")
+                if isinstance(fact_id, str) and fact_id:
+                    invalidated_fact_ids.add(fact_id)
                 for key in fact.get("source_event_keys") or ():
                     if isinstance(key, str) and key:
                         invalidated_keys.add(key)
-            if not invalidated_keys:
+            if not invalidated_keys and not invalidated_fact_ids:
                 return {
                     "ok": True, "changed": 0, "narrowed": 0,
                     "withdrawn": 0, "persona_retracted": [],
@@ -1616,7 +2426,13 @@ class ReflectionService:
                 if str(row.get("status") or "") in GROWTH_TERMINAL_STATUSES:
                     continue
                 before_status = str(row.get("status") or "")
-                if not _apply_support_removal(row, invalidated_keys, now_iso=now_iso):
+                if not _apply_support_removal(
+                    row,
+                    invalidated_keys,
+                    now_iso=now_iso,
+                    invalidated_fact_ids=sorted(invalidated_fact_ids),
+                    min_support=int(self._settings.growth_min_support),
+                ):
                     continue
                 changed += 1
                 row_id = str(row.get("id") or "")
@@ -1648,10 +2464,26 @@ class ReflectionService:
                 "persona_retracted": persona_retracted,
             }
 
+    def _retract_persona_for_reflection(
+        self, character: str, reflection_id: str, reason: str,
+    ) -> list[str]:
+        """Retract persona entries derived from one reflection (idempotent)."""
+        return self._retract_persona_source(
+            character, "reflection", reflection_id, reason,
+        )
+
     def _retract_persona_for_growth(
         self, character: str, item_id: str, reason: str,
     ) -> list[str]:
         """Retract persona entries derived from one growth item (idempotent)."""
+        return self._retract_persona_source(
+            character, "growth", item_id, reason,
+        )
+
+    def _retract_persona_source(
+        self, character: str, source: str, source_id: str, reason: str,
+    ) -> list[str]:
+        """Mark persona entries derived from one source row as invalidated."""
         if self._persona is None:
             return []
         method = getattr(self._persona, "retract_source", None)
@@ -1659,7 +2491,7 @@ class ReflectionService:
             return []
         try:
             result = method(
-                character, source="growth", source_id=item_id,
+                character, source=source, source_id=source_id,
                 reason=_bounded(reason, 200) or "user_retract",
             )
         except Exception:  # noqa: BLE001 - row withdrawal is the durable part
@@ -2023,6 +2855,14 @@ class ReflectionService:
         if absorbed_into is not None and row.get("absorbed_into") != absorbed_into:
             row["absorbed_into"] = absorbed_into
             changed = True
+        superseded_by = payload.get("superseded_by")
+        if superseded_by is not None and row.get("superseded_by") != superseded_by:
+            row["superseded_by"] = superseded_by
+            changed = True
+        if to_status == "superseded" and isinstance(reason, str) and reason:
+            if row.get("superseded_reason") != reason:
+                row["superseded_reason"] = reason
+                changed = True
         reason = payload.get("reason")
         if isinstance(reason, str) and reason:
             if to_status == "promote_blocked" and row.get("promote_blocked_reason") != reason:
@@ -2178,24 +3018,20 @@ class ReflectionDeletionCleaner:
                 if isinstance(item, str) and item
             ]
             remaining_support = [item for item in support if item not in source_keys]
-            if deleted_keys:
-                row["support_event_keys"] = remaining_support
-                row["support_count"] = len(remaining_support)
-                evidence = row.get("support_evidence")
-                buckets: dict[str, list[str]] = {}
-                if isinstance(evidence, Mapping):
-                    for flag in EVIDENCE_FLAGS:
-                        buckets[flag] = [
-                            str(item) for item in evidence.get(flag) or ()
-                            if isinstance(item, str)
-                            and item not in source_keys
-                        ]
-                else:
-                    buckets = {flag: [] for flag in EVIDENCE_FLAGS}
-                row["support_evidence"] = buckets
-                row["source_event_keys"] = [
-                    str(item) for item in row.get("source_event_keys") or ()
-                    if isinstance(item, str) and item not in source_keys
+            if deleted_sources or deleted_keys:
+                # Same recompute as the growth reconcile and the creation path:
+                # support is per independent experience, not per message. The
+                # cleaner owns row removal / needs_rebuild, the helper owns the
+                # numbers, so a narrowed row reports the same maturity the gate
+                # would compute for it.
+                recompute_support_after_removal(
+                    row,
+                    deleted_keys,
+                    invalidated_fact_ids=deleted_sources,
+                )
+                remaining_support = [
+                    str(item) for item in row.get("support_event_keys") or ()
+                    if isinstance(item, str) and item
                 ]
             fully_dependent = bool(sources) and not remaining_sources
             if is_growth and support and not remaining_support:
@@ -2357,6 +3193,15 @@ class ReflectionInvalidator:
                 character, row,
             ):
                 continue
+            # A correction removes the same support a deletion would, so the
+            # count/flags are recomputed by the same routine (M4). Skipping it
+            # here would leave a corrected row claiming evidence it lost.
+            # `source_fact_ids` stays: it is durable provenance, and the persona
+            # invalidator that runs after this one maps persona entries back to
+            # their reflection through exactly those ids.
+            recompute_support_after_removal(
+                row, (), invalidated_fact_ids=sorted(hit), drop_fact_ids=False,
+            )
             if sources and sources <= targets:
                 if (
                     str(row.get("status") or "") == "withdrawn"
@@ -2390,7 +3235,23 @@ class ReflectionInvalidator:
 # -- growth helpers ----------------------------------------------------------
 
 
-def _growth_explanation(row: Mapping[str, Any], version: int) -> dict[str, Any]:
+def _growth_explanation(
+    row: Mapping[str, Any],
+    version: int,
+    *,
+    promotion_rules: Mapping[str, Sequence[str]] | None = None,
+    min_support: int = 2,
+) -> dict[str, Any]:
+    """Growth item for the API/admin surface, with the unified evidence DTO.
+
+    Downstream consumers (management console, evolution, DSH rendering) read the
+    same fields the reflection layer derived, so an item cannot show one support
+    count here and another one in the evolution prompt.
+    """
+    rules = PROMOTION_RULES if promotion_rules is None else promotion_rules
+    dto = evidence_dto(
+        row, kind="growth", promotion_rules=rules, min_support=min_support,
+    )
     return {
         "id": row.get("id"),
         "kind": row.get("memory_kind"),
@@ -2398,10 +3259,16 @@ def _growth_explanation(row: Mapping[str, Any], version: int) -> dict[str, Any]:
         "situation": row.get("situation") or "",
         "applies_to": dict(row.get("applies_to") or {}),
         "status": row.get("status"),
-        "support_count": _as_int(row.get("support_count"), 0),
+        "support_count": dto["maturity"]["independent_experiences"],
         "source_event_keys": list(row.get("source_event_keys") or []),
         "support_event_keys": list(row.get("support_event_keys") or []),
         "source_fact_ids": list(row.get("source_fact_ids") or []),
+        # M4: origin, scope, maturity and eligibility in one shape.
+        "experiences": list(dto["experiences"]),
+        "maturity": dto["maturity"],
+        "eligible": dto["eligible"],
+        "eligibility": dto["eligibility"],
+        "evidence": dto,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
         "valid_from": row.get("valid_from"),
@@ -2481,7 +3348,66 @@ def _render_growth(
 # -- prompt ------------------------------------------------------------------
 
 
-def _build_synthesis_prompt(facts: Sequence[Mapping[str, Any]]) -> str:
+def _render_old_rows(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """One prompt line per existing understanding (design section 7.2)."""
+    lines: list[str] = []
+    for row in rows:
+        text = str(row.get("text") or "").strip()
+        if not text:
+            continue
+        parts = [f"[{row.get('id')}] {text}"]
+        status = str(row.get("status") or "pending")
+        supports = _as_int(row.get("support_count"), 0) or len(
+            [item for item in row.get("source_fact_ids") or ()
+             if isinstance(item, str)]
+        )
+        parts.append(
+            f"status={status} support={supports} "
+            f"rein={_as_float(row.get('reinforcement'), 0.0):.2f} "
+            f"disp={_as_float(row.get('disputation'), 0.0):.2f}"
+        )
+        scene = _normalize_scene(row.get("applies_to"))
+        if scene:
+            parts.append(
+                "scope=" + ",".join(f"{key}:{scene[key]}" for key in sorted(scene))
+            )
+        topic = str(row.get("topic") or "").strip()
+        if topic:
+            parts.append(f"topic={topic}")
+        lines.append(" | ".join(parts))
+    return lines
+
+
+def _render_strategies(rows: Sequence[Mapping[str, Any]]) -> list[str]:
+    """One prompt line per strategy already adopted (confirmed/promoted)."""
+    lines: list[str] = []
+    for row in rows:
+        claim = _normalize_claim(row.get("claim")) or str(row.get("text") or "").strip()
+        if not claim:
+            continue
+        line = f"[{row.get('id')}] {claim}"
+        situation = _normalize_situation(row.get("situation"))
+        if situation:
+            line += f" (when: {situation})"
+        kind = str(row.get("memory_kind") or "")
+        if kind:
+            line += f" kind={kind}"
+        lines.append(line)
+    return lines
+
+
+def _build_synthesis_prompt(
+    facts: Sequence[Mapping[str, Any]],
+    old_rows: Sequence[Mapping[str, Any]] = (),
+    strategies: Sequence[Mapping[str, Any]] = (),
+) -> str:
+    """Synthesis prompt: new evidence + existing understandings + strategies.
+
+    The old prompt listed facts only and ended with "produce the most
+    conservative understanding anyway", so a model could never say "nothing
+    new here" and could never maintain an existing row. This one asks for a
+    single local operation against the rows it was shown (design section 7.2).
+    """
     lines = [
         f"- {str(fact.get('text') or '').strip()} "
         f"(importance: {_importance_of(fact)})"
@@ -2489,21 +3415,59 @@ def _build_synthesis_prompt(facts: Sequence[Mapping[str, Any]]) -> str:
         if str(fact.get("text") or "").strip()
     ]
     body = "\n".join(lines)
+    old_block = _render_old_rows(old_rows)
+    strategy_block = _render_strategies(strategies)
+    old_section = "\n".join(old_block) if old_block else "(无，本主题还没有已有认识)"
+    strategy_section = (
+        "\n".join(strategy_block) if strategy_block
+        else "(无，还没有已采用的策略)"
+    )
     return (
-        "你是长期记忆反思器。根据下面的用户事实，归纳一条稳定的认识。\n"
-        "只输出一个 JSON 对象：{\"reflection\": \"一句独立陈述\", "
+        "你是长期记忆反思器。你维护的是已有的认识，而不是每批事实都产出一句新结论。\n"
+        "先读下面【已有认识】和【已采用策略】，再看【新事实】，"
+        "判断这批新事实该怎么改动已有认识，只选一个操作：\n"
+        "- add：确实出现一个全新的、有用的认识（与已有认识不重复）；\n"
+        "- reinforce：同一认识新增了独立支持，措辞不需要改；\n"
+        "- refine：需要补条件或收窄适用范围；\n"
+        "- supersede：旧认识已经过时，被这批事实取代；\n"
+        "- contradict：这批事实与旧认识明确相反；\n"
+        "- split：一条过宽的认识需要按场景拆开（用 parts 给出至少两条）；\n"
+        "- no_change：这批事实没有带来足够的新信息。\n"
+        "重要：no_change 是正常结果。没有新的稳定认识时必须选 no_change，"
+        "不要为了填满字段而硬造一条最保守的结论；也不要重复已有认识。\n"
+        "只输出一个 JSON 对象：{\"operation\": \"add|reinforce|refine|supersede|"
+        "contradict|split|no_change\", \"reflection\": \"一句独立陈述，no_change 时为 null\", "
+        "\"target_reflection_id\": \"要改动的已有认识 id，add 时为 null\", "
+        "\"topic\": \"这条认识的主题，简短名词\", "
         "\"entity\": \"master|neko|relationship\", "
         "\"relation_type\": null, \"temporal_scope\": null, "
+        "\"applies_to\": null|{\"plugin_id\": null, \"game_id\": null, "
+        "\"session_id\": null, \"scope\": null}, "
         "\"memory_kind\": null|habit|interest|experience|relationship, "
-        "\"claim\": null, \"situation\": null}。\n"
-        "不要重复原文，不要编造；没有稳定认识时也要给出最保守的一条。"
-        "只输出 JSON。\n\n"
-        f"事实：\n{body}"
+        "\"claim\": null, \"situation\": null, "
+        "\"parts\": null|[{\"reflection\": \"...\", \"applies_to\": null}]}。\n"
+        "认识要写成条件化的策略：触发条件 + 推荐做法 + 例外，"
+        "不要写成空泛的性格评价。不要复述原文，不要编造。只输出 JSON。\n\n"
+        f"【已有认识】\n{old_section}\n\n"
+        f"【已采用策略】\n{strategy_section}\n\n"
+        f"【新事实】\n{body}"
     )
 
 
 __all__ = [
     "EVIDENCE_SNAPSHOT_KEYS",
+    "MAX_PROMPT_OLD_ROWS",
+    "MAX_TOPIC_CHARS",
+    "OPERATION_ALIASES",
+    "REFLECTION_OPERATIONS",
+    "REFLECTION_STATUSES",
+    "SEMANTIC_MATCH_MIN",
+    "SUPERSEDE_REASON",
+    "CONTRADICT_REASON",
+    "operation_of",
+    "reflection_id_from_topic",
+    "scope_key",
+    "topic_key",
     "EVT_REFLECTION_EVIDENCE_UPDATED",
     "EVT_REFLECTION_STATE_CHANGED",
     "GrowthReceipt",

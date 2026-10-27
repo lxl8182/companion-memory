@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 from ..classification import CONTENT_CLASSES
 from ..contracts import Scene, Scope
+from ..domain.persona_teaching import EXPRESSION_SECTION_ID
 from ..event_sources import parse_source_key, sanitize_component
 from ..invalidation import row_matches_subject, scene_applies
 from ..persistence.records import event_from_snapshot, fingerprint
@@ -89,6 +90,29 @@ class ServiceProtocol:
                 rows.append(message)
         return rows[-20:]
 
+    @staticmethod
+    def context_layers(recall: Mapping[str, Any]) -> dict:
+        """M5 additive layers of /v1/context (existing keys are untouched).
+
+        'working_summary' is the three rebuildable projections, 'state' is the
+        real companion_state snapshot the recall read (same version as the block
+        the model saw), and 'episode' is the derived experience view. They are
+        reported separately from 'context' so a consumer written against B06
+        keeps reading exactly the same fields it always did.
+        """
+        state = recall.get("companion_state")
+        summary = recall.get("working_summary")
+        episode = recall.get("episode_summary")
+        return {
+            "working_summary": dict(summary) if isinstance(summary, Mapping) else None,
+            "state": dict(state) if isinstance(state, Mapping) else dict(
+                {"block": "", "version": 0, "updated_at": None, "items": []}
+            ),
+            "state_version": int(recall.get("companion_state_version") or 0),
+            "episode": dict(episode) if isinstance(episode, Mapping) else None,
+            "threads_source": str(recall.get("threads_source") or "none"),
+        }
+
     def issue(self, scope: Mapping, recall: dict, *, basis: dict | None = None) -> dict:
         from .server import ApiError
         basis = basis if basis is not None else self.basis()
@@ -111,10 +135,13 @@ class ServiceProtocol:
             "character_id": self.character, "persona_version": published.version if published.available else "",
             "card_revision": published.revision if published.available else card.revision,
             "projection": projection, "persona": "\n\n".join(projection.values()),
+            "expression": self.expression(projection, card, published),
             "context": recall, "corrections": {"block": correction.block, "version": correction.version},
             "recent_turns": self.recent(scope), "context_receipt_id": receipt_id,
             "expires_in_s": 300,
             "basis": basis,
+            # M5 additive layers; the keys above keep their exact shape.
+            **self.context_layers(recall),
         }
         with self._lock:
             self._contexts[receipt_id] = {"scope": dict(scope), "basis": basis,
@@ -122,6 +149,46 @@ class ServiceProtocol:
             while len(self._contexts) > 2048:
                 self._contexts.popitem(last=False)
         return result
+
+    def expression(self, projection: Mapping, card, published) -> dict:
+        """The taught expression rules that are actually in this projection.
+
+        Additive field (MC04-T): it names the *projection* of the existing tone
+        section, not a new section. A rule is reported only when its line is
+        still in the tone text the model is about to read, so a rule the user
+        edited away by hand is not claimed as active. The payload carries ids and
+        versions, never the quoted example a rule may cite.
+        """
+        text = str(projection.get(EXPRESSION_SECTION_ID) or "")
+        if not text:
+            return {"section_id": EXPRESSION_SECTION_ID, "rules": [],
+                    "tone_revision": 0, "tone_version": ""}
+        present = {line.strip() for line in text.splitlines() if line.strip()}
+        rules = [
+            {
+                "rule_id": str(rule.get("rule_id") or ""),
+                "teaching_id": str(rule.get("teaching_id") or ""),
+                "text": str(rule.get("text") or ""),
+            }
+            for rule in self.service.persona_teaching.rules(self.character)
+            if str(rule.get("line") or "") in present
+        ]
+        section_revision = 0
+        for section in getattr(card, "sections", ()) or ():
+            if section.section_id == EXPRESSION_SECTION_ID:
+                section_revision = int(getattr(section, "revision", 0) or 0)
+                break
+        tone_version = ""
+        if getattr(published, "available", False) and (
+            int(getattr(published, "revision", 0) or 0) == int(card.revision)
+        ):
+            tone_version = str(getattr(published, "version", "") or "")
+        return {
+            "section_id": EXPRESSION_SECTION_ID,
+            "rules": rules,
+            "tone_revision": section_revision,
+            "tone_version": tone_version,
+        }
 
     def reserve(self, body: Mapping, *, identity: Mapping | None = None) -> dict:
         """Pin a generated turn's basis before generation; resume after restart.
@@ -315,6 +382,26 @@ class ServiceProtocol:
     #: a QQ bridge can prove `sent` but not that the user read it.
     RECEIPT_KINDS = ("used", "sent", "delivered", "interrupted", "failed")
     RECEIPT_TRANSPORTS = ("qq_official", "qq_napcat", "console", "host")
+    #:
+    #: **The two vocabularies, and how they now agree (M6-A).** Nothing below
+    #: changes what an existing kind means; it names the relation explicitly so
+    #: a consumer stops guessing:
+    #:
+    #: | question | the one authoritative answer |
+    #: |---|---|
+    #: | did she *adopt* the persona this turn used? | `used` (a usage receipt; it
+    #:   carries `adoption_status` from the publish boundary) |
+    #: | did the platform *accept* the text? | `sent` for a whole turn reply,
+    #:   and the per-part delivery receipt on the output record for a body that
+    #:   was generated before anyone spoke (`/v1/outputs/deliver`) |
+    #: | did a UI actually show / play it? | `delivered` (display/playback fact) |
+    #:
+    #: So "adopted" and "delivered" were never the same axis and still are not:
+    #: **adoption is about the persona version, delivery is about the text.** The
+    #: closure added here is an optional `output_id` on a receipt, plus a read
+    #: view (`receipt_summary`) that answers both questions for one request from
+    #: the records that really exist, instead of the caller having to join two
+    #: tables itself.
 
     def receipt(self, body: Mapping) -> dict:
         from .server import ApiError
@@ -342,6 +429,20 @@ class ServiceProtocol:
             if isinstance(count, bool) or not isinstance(count, int) or not 0 <= count <= len(record.reply or ""):
                 raise ApiError("invalid_argument", "delivered_chars is outside the committed reply")
             payload["delivered_chars"] = count
+        # M6-A: a receipt may name the output record it is evidence about. It is
+        # additive (absent -> the row is byte-for-byte the old shape) and it is
+        # validated against this subject, so naming someone else output is a
+        # 404 rather than a silent cross-scope link.
+        output_id = str(body.get("output_id") or "").strip()
+        if output_id:
+            outputs = getattr(self.core, "output_service", None)
+            known = (
+                outputs.get(self.character, output_id, include_text=False)
+                if outputs is not None else None
+            )
+            if known is None or str(known.get("subject") or "") != scope["subject"]:
+                raise ApiError("not_found", "unknown output in this scope")
+            payload["output_id"] = output_id
         if kind == "sent":
             # A transport acceptance is its own fact: which platform took the
             # text, and which platform message ids carry it. Splitting a reply
@@ -391,6 +492,95 @@ class ServiceProtocol:
         receipt = self.receipt(dict(scope, request_id=payload["request_id"], kind="used",
                                     receipt_id="used:" + scope["client_id"] + ":" + payload["request_id"], consumer="chat"))
         return dict(payload, usage_receipt_id=receipt["receipt_id"])
+
+    def receipt_summary(self, scope: Mapping, request_id: str) -> dict:
+        """One request adoption and delivery, answered from the records.
+
+        The plain read (`/v1/receipts`) lists receipts for a scope, which forces
+        a caller to filter by request and to know that a turn reply and a
+        pre-generated body are delivered through two different mechanisms. This
+        view answers the two questions separately and reports which record each
+        answer came from, so the caller never has to join them:
+
+        * **adopted** -- the persona version this turn was generated with, and
+          whether the chat consumer adopted it (the `used` receipt);
+        * **delivered** -- how much of the text really arrived, from the `sent`
+          parts of a turn reply and/or the per-part receipts of an output record.
+
+        Nothing here is inferred: every field is read from a stored row, and an
+        unknown request in this scope is a 404 like the rest of the surface.
+        """
+        from .server import ApiError
+
+        wanted = str(request_id or "").strip()
+        if not wanted:
+            raise ApiError("invalid_argument", "request_id is required")
+        record = self.core.turn_requests.get(self.character, wanted)
+        if record is None or record.subject != scope["subject"]:
+            raise ApiError("not_found", "unknown request in this scope")
+        with self._lock:
+            rows = [
+                row for row in self._load()["receipts"].values()
+                if row["scope"] == dict(scope)
+                and str(row.get("request_id")) == wanted
+            ]
+        used = [row for row in rows if str(row.get("kind")) == "used"]
+        sent = [row for row in rows if str(row.get("kind")) == "sent"]
+        delivered = [row for row in rows if str(row.get("kind")) == "delivered"]
+        reply = record.reply or ""
+        outputs = getattr(self.core, "output_service", None)
+        output_rows: list[dict] = []
+        for row in (outputs.list(self.character, limit=512) if outputs else []):
+            if str(row.get("subject") or "") != scope["subject"]:
+                continue
+            cause = row.get("cause") if isinstance(row.get("cause"), Mapping) else {}
+            if str(cause.get("request_id") or "") != wanted:
+                continue
+            output_rows.append(row)
+        delivered_chars = max(
+            [int(row.get("delivered_chars") or 0) for row in delivered] or [0],
+        )
+        return {
+            "request_id": wanted,
+            "subject": scope["subject"],
+            "status": "invalidated" if record.status == "deleted" else "recorded",
+            "adopted": {
+                "persona_version": record.persona_version,
+                "adoption_status": next(
+                    (row.get("adoption_status") for row in used
+                     if row.get("adoption_status")),
+                    None,
+                ),
+                "receipt_ids": [str(row.get("receipt_id")) for row in used],
+            },
+            "delivered": {
+                "text_chars": len(reply),
+                "sent_chars": sum(int(row.get("sent_chars") or 0) for row in sent),
+                "delivered_chars": delivered_chars,
+                "complete": bool(reply) and delivered_chars >= len(reply),
+                "transport_parts": [
+                    part for row in sent for part in row.get("parts") or ()
+                ],
+            },
+            "outputs": [
+                {
+                    "output_id": str(row.get("output_id") or ""),
+                    "status": str(row.get("status") or ""),
+                    "parts_total": int(row.get("parts_total") or 0),
+                    # parts_delivered is a *list* of receipt rows in the M5
+                    # contract; only its length is meaningful here.
+                    "parts_delivered": len(row.get("parts_delivered") or ()),
+                    "delivered_chars": int(row.get("delivered_chars") or 0),
+                    "pending_indices": list(row.get("pending_indices") or ()),
+                    "resumable": bool(row.get("resumable")),
+                }
+                for row in output_rows
+            ],
+            "output_delivered_chars": sum(
+                int(row.get("delivered_chars") or 0) for row in output_rows
+            ),
+            "receipt_kinds": sorted({str(row.get("kind")) for row in rows}),
+        }
 
     def receipts(self, scope: Mapping) -> dict:
         with self._lock:

@@ -177,7 +177,29 @@ class ManagementApi:
                         # a conversation. It reaches no console route, no other
                         # subject and no bulk edit, and it never implies the
                         # persona capability.
-                        "memory_tools": bool(spec.get("memory_tools", False))}
+                        "memory_tools": bool(spec.get("memory_tools", False)),
+                        # A third independent grant (MC04-T): the chat client may
+                        # submit an *explicit teaching* from inside the
+                        # conversation, and take one back. It can only point at a
+                        # message the service already saved; it can never post
+                        # rule text, edit another section, or publish for a
+                        # consumer other than the next turn. Narrower than
+                        # host_persona on purpose.
+                        "persona_teach": bool(spec.get("persona_teach", False)),
+                        # M5: a fourth independent grant -- record assistant
+                        # output and report delivery. Narrower than all of the
+                        # above: a receipt can only *confirm* what arrived, never
+                        # declare undelivered text an experience.
+                        "memory_outputs": bool(spec.get("memory_outputs", False)),
+                        # M6-A: which plugin ids this client may cite as a saved
+                        # message source. Per client on purpose (a global list
+                        # would let any teaching-capable client reach every
+                        # plugin's messages), and it grants nothing by itself:
+                        # the conditions in _saved_user_message are AND.
+                        "trusted_plugins": [
+                            str(item) for item in spec.get("trusted_plugins") or ()
+                            if isinstance(item, str) and item
+                        ]}
         raise ApiError("unauthorized", 401, "a current client identity is required")
 
     def scoped(self, payload: Mapping, identity: Mapping) -> dict:
@@ -294,10 +316,574 @@ class ManagementApi:
         self.service._refresh_chat_capability()
         return result
 
-    def protocol_get(self, path: str, body: Mapping):
+
+    # -- limited assistant-output capability (M5) --------------------------
+
+    @staticmethod
+    def require_memory_outputs(identity: Mapping) -> None:
+        """Refuse unless this identity may record/confirm assistant output.
+
+        The grant is per client in stack.toml (memory_outputs = true). It is the
+        fourth independent capability: recording a body and confirming delivery
+        cannot touch the persona card, the console surface or another subject.
+        """
+        if not identity.get("memory_outputs"):
+            raise ApiError("forbidden", 403, "this identity has no output capability")
+
+    def output_record(self, payload: Mapping, identity: Mapping) -> dict:
+        """Persist one generated assistant body (nothing is delivered yet).
+
+        The body is stored for a later resume; the returned record says which
+        parts still have to arrive. A caller can only speak for the subject it
+        is scoped to, exactly like the other conversation capabilities.
+        """
+        self.require_memory_outputs(identity)
+        scope = self._memory_scope(payload, identity)
+        text = payload.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ApiError("invalid_argument", 400, "text is required")
+        cause = payload.get("cause")
+        if cause is not None and not isinstance(cause, Mapping):
+            raise ApiError("invalid_argument", 400, "cause must be an object")
+        part_sizes = payload.get("part_sizes")
+        if part_sizes is not None and (
+            not isinstance(part_sizes, list)
+            or not all(isinstance(item, int) and not isinstance(item, bool)
+                       for item in part_sizes)
+        ):
+            raise ApiError("invalid_argument", 400, "part_sizes must be a list of integers")
+        request_id = payload.get("request_id")
+        if request_id is not None and not isinstance(request_id, str):
+            raise ApiError("invalid_argument", 400, "request_id must be a string")
+        with self.console._lock:
+            result = self.service.core.output_service.create(
+                self.console.character,
+                text=text,
+                kind=str(payload.get("kind") or "notice"),
+                subject=scope["subject"],
+                scene=scope["scene"],
+                session_id=scope["session_id"],
+                client_id=identity.get("client_id", ""),
+                episode_id=payload.get("episode_id"),
+                source_key=payload.get("source_key"),
+                cause=dict(cause or {}),
+                request_id=(request_id or None),
+                part_sizes=part_sizes,
+            )
+        if not result.ok:
+            raise ApiError(
+                "invalid_argument" if result.reason not in ("unknown_output",) else "not_found",
+                400 if not result.conflict else 409,
+                result.reason or "output rejected",
+            )
+        return result.to_dict(include_text=True)
+
+    def output_deliver(self, payload: Mapping, identity: Mapping) -> dict:
+        """Confirm which parts the platform accepted; those (and only those) land.
+
+        The receipt is the only route into the shared conversation, so a
+        duplicate report is a duplicate (no second line, no double count) and an
+        interrupted delivery keeps the body for a retry without writing recent.
+        """
+        self.require_memory_outputs(identity)
+        scope = self._memory_scope(payload, identity)
+        output_id = str(payload.get("output_id") or "").strip()
+        if not output_id:
+            raise ApiError("invalid_argument", 400, "output_id is required")
+        record = self.service.core.output_service.get(
+            self.console.character, output_id, include_text=False,
+        )
+        if record is None or str(record.get("subject") or "") != scope["subject"]:
+            raise ApiError("not_found", 404, "unknown output in this scope")
+        parts = payload.get("parts")
+        if parts is not None and not isinstance(parts, list):
+            raise ApiError("invalid_argument", 400, "parts must be a list")
+        kind = str(payload.get("kind") or "sent")
+        with self.console._lock:
+            result = self.service.core.output_service.deliver(
+                self.console.character, output_id,
+                parts=parts, platform_id=str(payload.get("platform_id") or ""),
+                kind=kind, reason=payload.get("reason"),
+            )
+        if not result.ok:
+            status = 409 if result.conflict else (
+                404 if result.reason == "unknown_output" else 400
+            )
+            raise ApiError(result.reason or "delivery rejected", status,
+                           result.reason or "delivery rejected")
+        return result.to_dict(include_text=False)
+
+    def output_view(self, query: Mapping[str, list[str]], identity: Mapping) -> dict:
+        """List outputs or fetch one, always scoped to this subject."""
+        self.require_memory_outputs(identity)
+        scope = self._memory_scope({key: values[0] for key, values in query.items() if values}, identity)
+        output_id = str((query.get("output_id") or [""])[0] or "").strip()
+        character = self.console.character
+        if output_id:
+            payload = self.service.core.output_service.get(
+                character, output_id, include_text=True,
+            )
+            if payload is None or str(payload.get("subject") or "") != scope["subject"]:
+                raise ApiError("not_found", 404, "unknown output in this scope")
+            return payload
+        if str((query.get("pending") or [""])[0]).lower() in ("1", "true", "yes"):
+            items = self.service.core.output_service.pending(character, limit=20)
+            return {"subject": scope["subject"], "items": [
+                item for item in items
+                if str(item.get("subject") or "") == scope["subject"]
+            ]}
+        items = self.service.core.output_service.list(character, limit=20)
+        return {"subject": scope["subject"], "items": [
+            item for item in items
+            if str(item.get("subject") or "") == scope["subject"]
+        ]}
+
+    def summary_view(
+        self, path: str, query: Mapping[str, list[str]], identity: Mapping,
+    ) -> dict:
+        """The rebuildable working summary and the follow-up resolver.
+
+        Read-only projections over the authoritative records: the same subject
+        scoping as every other conversation route, and nothing cached is served.
+        """
+        body = {key: values[0] for key, values in query.items() if values}
+        scope = self._memory_scope(body, identity)
+        character = self.console.character
+        if path == "/v1/working-summary":
+            return self.service.core.working_summary_service.build(
+                character, subject=scope["subject"],
+                scene=scope["scene"] or None,
+                language=str(body.get("language") or "zh"),
+            ).to_dict()
+        return self.service.core.working_summary_service.resolve_followup(
+            character, str(body.get("text") or ""),
+            subject=scope["subject"], scene=scope["scene"] or None,
+            language=str(body.get("language") or "zh"),
+        )
+
+    def output_invalidate(self, payload: Mapping, identity: Mapping) -> dict:
+        """Retire an output whose cause was deleted (body cleared, id kept)."""
+        self.require_memory_outputs(identity)
+        scope = self._memory_scope(payload, identity)
+        output_id = str(payload.get("output_id") or "").strip()
+        if not output_id:
+            raise ApiError("invalid_argument", 400, "output_id is required")
+        record = self.service.core.output_service.get(
+            self.console.character, output_id, include_text=False,
+        )
+        if record is None or str(record.get("subject") or "") != scope["subject"]:
+            raise ApiError("not_found", 404, "unknown output in this scope")
+        with self.console._lock:
+            result = self.service.core.output_service.invalidate(
+                self.console.character, output_id,
+                reason=str(payload.get("reason") or "source_deleted"),
+            )
+        return result.to_dict(include_text=False)
+
+    @staticmethod
+    def require_persona_teach(identity: Mapping) -> None:
+        """Refuse unless this identity was granted the explicit-teaching role.
+
+        The grant is per client in `stack.toml` (`persona_teach = true`), checked
+        here *and* in the transport, so a routing mistake cannot widen a normal
+        chat client into a persona editor. It is deliberately separate from
+        `host_persona` (the desktop persona editor) and from `memory_tools`
+        (the speaker's own facts): teaching writes the card, but only through the
+        narrow rule surface below.
+        """
+        if not identity.get("persona_teach"):
+            raise ApiError(
+                "forbidden", 403,
+                "this identity has no persona teaching capability",
+            )
+
+    #: Content classes a teaching may cite. Companion output is her own line,
+    #: never the user teaching; game/plugin notices are not style requests.
+    TEACHABLE_CLASSES = frozenset({
+        "chat", "preference", "life_fact", "shared_experience",
+    })
+
+    def _saved_user_message(
+        self, source_key: str, *, identity: Mapping | None = None,
+        scope_subject: str | None = None,
+    ) -> dict:
+        """Find the saved user message a `/v1/persona/teach` call cites.
+
+        The service reads the message itself; this is the security boundary that
+        makes teaching different from "post me some rules". Sources come from the
+        conversation journal (authoritative) and the recent window (what the
+        host and plugins actually wrote). The returned text is the *stored* one,
+        never a caller-supplied string.
+
+        **Two source families, two rules** (M6-A):
+
+        * a host source (`host:<character>:<subject>:<event_id>`) is this
+          conversation's own record. Its path is unchanged: same character, the
+          configured subject, and `plugin_id is None`;
+        * a plugin source is that plugin's record, which used to be refused
+          outright. It is now allowed only when *all* of the following hold --
+          this identity holds `persona_teach`, the source subject is one of
+          *this identity's* subjects, the source character is this service's
+          character, and the plugin id is in *this identity's* trusted list.
+
+        The four conditions are AND, never OR, and the trusted list is per
+        client: a global allow-list would let any client with `persona_teach`
+        cite every plugin's messages, which is exactly the cross-surface leak the
+        old blanket refusal was protecting against. An unconfigured client gets
+        an empty list, so **an upgrade alone changes nothing** -- the QQ path
+        stays refused until someone grants a specific plugin to a specific
+        client in `stack.toml`.
+        """
+        key = str(source_key or "").strip()
+        if not key:
+            raise ApiError("invalid_argument", 400, "source_key is required")
+        from ..event_sources import parse_source_key
+
+        parsed = parse_source_key(key)
+        if parsed is None:
+            raise ApiError("invalid_argument", 400, "source_key is not a saved message reference")
+        if parsed.get("character") != self.console.character:
+            raise ApiError("scope_mismatch", 403, "source is outside this character")
+        if parsed.get("plugin_id") is None:
+            # Host source: unchanged rule (this conversation, configured subject).
+            if parsed.get("subject") != self.subject:
+                raise ApiError("scope_mismatch", 403, "source is outside this subject")
+        else:
+            self._require_trusted_plugin_source(parsed, identity or {})
+            if scope_subject is not None and str(parsed.get("subject")) != str(scope_subject):
+                # The call declares one subject and cites a message from another.
+                # Both may individually sit inside this identity's subjects (one
+                # client can be scoped to several), so each gate alone would
+                # pass; only the comparison catches it. A rule derived from
+                # subject A's message must never land under subject B.
+                raise ApiError(
+                    "forbidden", 403, "source is outside this subject",
+                    extra={
+                        "source_subject": parsed.get("subject"),
+                        "request_subject": str(scope_subject),
+                    },
+                )
+        found = self._journal_message(key)
+        if found is None:
+            raise ApiError(
+                "not_found", 404,
+                "no saved user message with that source_key",
+                extra={"source_key": key},
+            )
+        return found
+
+    @staticmethod
+    def _require_trusted_plugin_source(
+        parsed: Mapping[str, Any], identity: Mapping,
+    ) -> None:
+        """Allow a plugin source only for its own, explicitly trusting identity.
+
+        Kept as one routine so the four conditions cannot drift apart, and so the
+        refusal reason names which one failed (an operator debugging a QQ setup
+        needs to know whether the capability, the subject, the character or the
+        allow-list is the blocker).
+        """
+        if not identity.get("persona_teach"):
+            raise ApiError(
+                "forbidden", 403,
+                "this identity has no persona teaching capability",
+            )
+        subjects = [
+            str(item) for item in identity.get("subjects") or () if isinstance(item, str)
+        ]
+        if str(parsed.get("subject") or "") not in subjects:
+            raise ApiError(
+                "scope_mismatch", 403,
+                "source is outside this identity's subjects",
+                extra={"source_subject": parsed.get("subject")},
+            )
+        plugin_id = str(parsed.get("plugin_id") or "")
+        trusted = [
+            str(item) for item in identity.get("trusted_plugins") or ()
+            if isinstance(item, str) and item
+        ]
+        if plugin_id not in trusted:
+            raise ApiError(
+                "forbidden", 403,
+                "source plugin is not trusted by this identity",
+                extra={"plugin_id": plugin_id, "trusted_plugins": trusted},
+            )
+
+    def _journal_message(self, source_key: str) -> dict | None:
+        """The authoritative saved turn for a source key, or None.
+
+        The conversation window is checked first because it is the cheap, bounded
+        read; the journal is the authority for a turn committed through
+        `/v1/turns` or `/v1/chat` even after the window has been compressed
+        away. A message covered by a deletion tombstone is not a usable source:
+        teaching must not resurrect text the user deleted.
+        """
         core = self.service.core
+        barrier = getattr(core, "barrier", None)
+        if barrier is not None and barrier.blocks_source_key(
+            self.console.character, source_key,
+        ):
+            raise ApiError(
+                "deleted", 410, "this source message was deleted",
+                extra={"source_key": source_key},
+            )
+        try:
+            messages = core.recent.messages(self.console.character)
+        except Exception:  # noqa: BLE001 - a damaged window is not a saved turn
+            messages = []
+        for message in messages:
+            if not isinstance(message, Mapping) or message.get("type") != "human":
+                continue
+            data = message.get("data") if isinstance(message.get("data"), Mapping) else {}
+            metadata = data.get("metadata") if isinstance(data.get("metadata"), Mapping) else {}
+            keys = metadata.get("source_event_keys")
+            candidates = {str(item) for item in keys or () if isinstance(item, str)}
+            single = metadata.get("source_key")
+            if isinstance(single, str) and single:
+                candidates.add(single)
+            if source_key not in candidates:
+                continue
+            text = str(data.get("content") or "").strip()
+            if not text:
+                continue
+            return {
+                "source_key": source_key,
+                "text": text,
+                "content_class": str(metadata.get("content_class") or ""),
+                "subject": str(metadata.get("subject") or self.subject),
+                "origin": "recent",
+            }
+        # The window is bounded and gets compressed; the journal still holds the
+        # turn, so a teaching from an older message keeps working.
+        for entry in core.journal.read_since(self.console.character, -1):
+            payload = entry.payload
+            if not isinstance(payload, Mapping):
+                continue
+            if str(payload.get("source_key") or "") != source_key:
+                continue
+            text = str(payload.get("text") or "").strip()
+            if not text:
+                continue
+            if barrier is not None and barrier.blocks_source_key(
+                self.console.character, source_key,
+            ):
+                raise ApiError(
+                    "deleted", 410, "this source message was deleted",
+                    extra={"source_key": source_key},
+                )
+            scope = payload.get("scope")
+            return {
+                "source_key": source_key,
+                "text": text,
+                "content_class": str(payload.get("content_class") or ""),
+                "subject": str(scope.get("subject") or self.subject)
+                if isinstance(scope, Mapping) else self.subject,
+                "origin": "journal",
+            }
+        return None
+
+    def persona_teach(self, payload: Mapping[str, Any], identity: Mapping) -> dict:
+        """Record one explicit teaching from a saved message, then publish.
+
+        Request fields (no rule text accepted, by design):
+          source_key      - the saved user message that states the request;
+          base_revision   - the card revision the caller saw (CAS);
+          subject         - optional, must stay inside the identity;
+          quoted_example  - optional {source_key?|text?} the rule cites.
+        Response: teaching_id / intent / revision / published_version / target /
+        rules / status. A stale base revision is 409 with the current card.
+        """
+        self.require_persona_teach(identity)
+        scope = self._memory_scope(payload, identity)
+        base_revision = payload.get("base_revision")
+        if isinstance(base_revision, bool) or not isinstance(base_revision, int):
+            raise ApiError("invalid_argument", 400, "base_revision must be an integer")
+        source = self._saved_user_message(
+            str(payload.get("source_key") or ""), identity=identity,
+            scope_subject=scope["subject"],
+        )
+        if source["subject"] != scope["subject"]:
+            raise ApiError("forbidden", 403, "source is outside this subject")
+        content_class = source["content_class"]
+        if content_class and content_class not in self.TEACHABLE_CLASSES:
+            raise ApiError(
+                "forbidden", 403,
+                "this saved message is not the user speaking",
+                extra={"content_class": content_class},
+            )
+        example = payload.get("quoted_example")
+        if example is not None and not isinstance(example, Mapping):
+            raise ApiError("invalid_argument", 400, "quoted_example must be an object")
+        quoted: dict[str, Any] = {}
+        # The publish boundary is part of the contract, not a hint: teaching
+        # changes the next generation only (realtime/game consumers have their
+        # own boundaries in B11).
+        target = str(payload.get("target") or "next_turn").strip()
+        if target != "next_turn":
+            raise ApiError(
+                "rejected", 422,
+                "explicit teaching publishes on the next_turn boundary only",
+                extra={"reason": "invalid_target", "target": target},
+            )
+        if isinstance(example, Mapping):
+            example_key = str(example.get("source_key") or "").strip()
+            if example_key:
+                # An authorised example must also be a saved message: a client
+                # cannot paste the text it wants imitated.
+                found = self._saved_user_message(
+                    example_key, identity=identity,
+                    scope_subject=scope["subject"],
+                )
+                quoted = {"source_key": found["source_key"], "text": found["text"]}
+            else:
+                raise ApiError(
+                    "invalid_argument", 400,
+                    "quoted_example needs a saved source_key",
+                )
+        with self.console._lock:
+            receipt = self.service.persona_teaching.teach(self.console.character, {
+                "source_key": source["source_key"],
+                "source_text": source["text"],
+                "content_class": content_class,
+                "base_revision": base_revision,
+                "subject": scope["subject"],
+                "client_id": str(identity.get("client_id") or ""),
+                "quoted_example": quoted or None,
+                "target": "next_turn",
+            })
+        return self._teaching_view(receipt, "teach")
+
+    def persona_teach_revoke(self, payload: Mapping[str, Any], identity: Mapping) -> dict:
+        """Withdraw one teaching ("刚才那条别学了"). Other rules stay in place.
+
+        Accepts `teaching_id` (preferred) or `source_key` (the message that
+        taught it), plus the `base_revision` the caller saw.
+        """
+        self.require_persona_teach(identity)
+        scope = self._memory_scope(payload, identity)
+        base_revision = payload.get("base_revision")
+        if isinstance(base_revision, bool) or not isinstance(base_revision, int):
+            raise ApiError("invalid_argument", 400, "base_revision must be an integer")
+        teaching_id = str(payload.get("teaching_id") or "").strip()
+        source_key = str(payload.get("source_key") or "").strip()
+        if not teaching_id and not source_key:
+            raise ApiError(
+                "invalid_argument", 400, "teaching_id or source_key is required",
+            )
+        if source_key:
+            from ..event_sources import parse_source_key
+
+            parsed = parse_source_key(source_key)
+            if parsed is None or parsed.get("character") != self.console.character:
+                raise ApiError("invalid_argument", 400, "source_key is not a saved message reference")
+        with self.console._lock:
+            receipt = self.service.persona_teaching.revoke(
+                self.console.character, {
+                    "teaching_id": teaching_id,
+                    "source_key": source_key,
+                    "base_revision": base_revision,
+                    "subject": scope["subject"],
+                    "reason": str(payload.get("reason") or "user_requested"),
+                },
+            )
+        return self._teaching_view(receipt, "revoke")
+
+    @staticmethod
+    def _teaching_view(receipt, action: str) -> dict:
+        """Wire view of a teaching receipt; a conflict carries the current card."""
+        card = receipt.card
+        view = {
+            "status": receipt.status,
+            "action": action,
+            "teaching_id": receipt.teaching_id,
+            "intent": receipt.intent,
+            "revision": int(receipt.revision or 0),
+            "base_revision": int(receipt.base_revision or 0),
+            "published_version": receipt.published_version,
+            "target": receipt.target,
+            "rules": [dict(item) for item in receipt.rules],
+            "reason": receipt.reason,
+            "duplicate": bool(receipt.duplicate),
+            "conflict": bool(receipt.conflict),
+        }
+        if receipt.conflict or receipt.status == "conflict":
+            current = None
+            if card is not None:
+                current = {
+                    "character": card.character,
+                    "revision": int(card.revision or 0),
+                    "initial_revision": int(card.initial_revision or 0),
+                    "sections": [
+                        _section_view(section.to_mapping())
+                        for section in card.sections
+                    ],
+                }
+            raise ApiError(
+                "revision_conflict", 409,
+                "base_revision changed; keep the draft and refresh",
+                extra={"current": current} if current else {},
+            )
+        if view["status"] == "rejected":
+            raise ApiError(
+                "rejected", 422,
+                str(receipt.reason or "teaching rejected"),
+                extra={
+                    "reason": receipt.reason,
+                    "teaching_id": receipt.teaching_id,
+                },
+            )
+        return view
+
+    def persona_teachings(self, query: Mapping[str, list[str]]) -> dict:
+        """What this character has been taught, newest state per record."""
+        character = self.console.character
+        rows = self.service.persona_teaching.teachings(character)
+        active = self.service.persona_teaching.rules(character)
+        first = lambda key, default="": (query.get(key) or [default])[0]
+        status = str(first("status") or "").strip()
+        visible = [row for row in rows if not status or row.get("status") == status]
+        return {
+            "character_id": character,
+            "card_revision": int(self.service.core.persona_card_service.get(character).revision or 0),
+            "published_version": self.service.core.persona_publish.current(character).version,
+            "active_rule_ids": [str(rule.get("rule_id") or "") for rule in active],
+            "items": [
+                {
+                    "teaching_id": str(row.get("teaching_id") or ""),
+                    "status": str(row.get("status") or ""),
+                    "intent": str(row.get("intent") or ""),
+                    "source_key": str(row.get("source_key") or ""),
+                    "rules": [
+                        {"rule_id": str(rule.get("rule_id") or ""),
+                         "text": str(rule.get("text") or "")}
+                        for rule in row.get("rules") or ()
+                    ],
+                    "revision": int(row.get("revision") or 0),
+                    "published_version": str(row.get("published_version") or ""),
+                    "created_at": row.get("created_at"),
+                    "updated_at": row.get("updated_at"),
+                    "revoked_at": row.get("revoked_at"),
+                    "superseded_at": row.get("superseded_at"),
+                }
+                for row in visible
+            ],
+        }
+    def protocol_get(self, path: str, body: Mapping, *, identity: Mapping | None = None):
+        core = self.service.core
+        if path == "/v1/outputs":
+            return self.output_view(
+                {key: [str(value)] for key, value in body.items()}, identity or {},
+            )
         if path == "/v1/receipts":
             return self.service.protocol.receipts(self.service.protocol.scope(body))
+        if path == "/v1/receipts/summary":
+            # M6-A: adoption vs actual delivery for one request, from the
+            # records themselves. A read view; it writes nothing and adds no
+            # field to the existing /v1/receipts rows.
+            return self.service.protocol.receipt_summary(
+                self.service.protocol.scope(body),
+                str(body.get("request_id") or ""),
+            )
         if path == "/v1/cleanup/pending":
             plugin = str(body.get("plugin_id") or "")
             if not plugin:
@@ -470,8 +1056,14 @@ class ManagementApi:
         view["subject"] = scope["subject"]
         return view
 
-    def protocol_post(self, path: str, payload: Mapping):
+    def protocol_post(self, path: str, payload: Mapping, *, identity: Mapping | None = None):
         core = self.service.core
+        if path == "/v1/outputs":
+            return self.output_record(payload, identity or {})
+        if path == "/v1/outputs/deliver":
+            return self.output_deliver(payload, identity or {})
+        if path == "/v1/outputs/invalidate":
+            return self.output_invalidate(payload, identity or {})
         if path == "/v1/context/reserve":
             return self.service.protocol.reserve(payload)
         if path == "/v1/context/validate":
@@ -516,6 +1108,15 @@ class ManagementApi:
         if path == "/v1/memory/entries":
             return self.memory_entries({key: values[0] for key, values in query.items() if values},
                                        identity or {})
+        # Teaching is a capability route like the host persona one: dispatched
+        # before the width check and re-checked inside the handler.
+        if path == "/v1/persona/teachings":
+            self.require_persona_teach(identity or {})
+            return self.persona_teachings(query)
+        if path == "/v1/outputs":
+            return self.output_view(query, identity or {})
+        if path in ("/v1/working-summary", "/v1/followup"):
+            return self.summary_view(path, query, identity or {})
         self.check_scope({key: values[0] for key, values in query.items() if values})
         result = self.protocol_get(path, {key: values[0] for key, values in query.items() if values})
         if result is not None:
@@ -533,6 +1134,12 @@ class ManagementApi:
         return self.console.get("/api/" + path.removeprefix("/v1/"), query)
 
     def post(self, path: str, payload: Mapping[str, Any], *, identity: Mapping | None = None) -> dict[str, Any]:
+        if path == "/v1/outputs":
+            return self.output_record(payload, identity or {})
+        if path == "/v1/outputs/deliver":
+            return self.output_deliver(payload, identity or {})
+        if path == "/v1/outputs/invalidate":
+            return self.output_invalidate(payload, identity or {})
         if path in ("/v1/host/persona", "/v1/host/persona/publish"):
             self.require_host_persona(identity or {})
             self.check_scope(payload)
@@ -543,6 +1150,12 @@ class ManagementApi:
             if path == "/v1/memory/correct":
                 return self.memory_correct(payload, identity or {})
             return self.memory_forget(payload, identity or {})
+        if path in ("/v1/persona/teach", "/v1/persona/teach/revoke"):
+            self.require_persona_teach(identity or {})
+            self.check_scope(payload)
+            if path == "/v1/persona/teach":
+                return self.persona_teach(payload, identity or {})
+            return self.persona_teach_revoke(payload, identity or {})
         self.check_scope(payload)
         result = self.protocol_post(path, payload)
         if result is not None:

@@ -98,6 +98,10 @@ CORE_EVENT_TYPES: frozenset[str] = frozenset({
     "core.source_recorded",
     "core.correction_recorded",
     "core.turn_committed",
+    "core.output_recorded",
+    # M6-A: one proactive candidate (cause, source, status) per entry, so a
+    # candidate table survives a crash between its journal fsync and its view.
+    "core.proactive_candidate",
     "service.consumer_receipt",
 })
 
