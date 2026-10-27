@@ -1,0 +1,1020 @@
+"""B12 evidence-based persona revision proposals (model proposes, card stays).
+
+Flow implemented here:
+
+1. refuse while disabled (default) or while the card is uninitialized;
+2. dedupe by request_id (same request returns the same proposal);
+3. collect evidence rows through the injected evidence_provider and reject
+   missing/deleted/corrected sources;
+4. select only open card sections (editable_by.evolution and not frozen);
+5. ask ModelInvoker for one strict-JSON proposal (purpose
+   persona_evolution_proposal, explicit tier/token/timeout budget);
+6. deterministically validate operations, section openness, text length,
+   base_revision, source existence/barrier and config/secret leakage;
+7. persist a proposal row (status proposed) and a journal snapshot.
+
+The service never calls PersonaCardService.revise and never writes the card.
+Failures carry a stable reason and never return an empty success.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import copy
+import hashlib
+import inspect
+import json
+import re
+import threading
+import uuid
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any, Mapping, Sequence
+
+from ..ports import Clock, ModelInvoker, StorageRoots, WritePermit
+from ..persistence.evolution import (
+    STATUS_PROPOSED,
+    STATUS_WITHDRAWN,
+    EvolutionStore,
+)
+from .persona_card import MAX_SECTION_TEXT, CardSection, PersonaCardService
+
+EVT_PERSONA_EVOLUTION_PROPOSED = "core.persona_evolution_proposed"
+PURPOSE_PERSONA_EVOLUTION_PROPOSAL = "persona_evolution_proposal"
+
+REASON_DISABLED = "disabled"
+REASON_INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+REASON_SOURCE_DELETED = "source_deleted"
+REASON_SECTION_FROZEN = "section_frozen"
+REASON_SECTION_NOT_EDITABLE = "section_not_editable"
+REASON_BASE_REVISION_CONFLICT = "base_revision_conflict"
+REASON_INVALID_MODEL_OUTPUT = "invalid_model_output"
+REASON_VALIDATION_FAILED = "validation_failed"
+REASON_TIMEOUT = "timeout"
+REASON_MODEL_ERROR = "model_error"
+REASON_DUPLICATE_REQUEST = "duplicate_request"
+REASON_NO_CHANGE = "no_change"
+REASON_PROPOSAL_LIMIT = "proposal_limit"
+REASON_NOT_INITIALIZED = "not_initialized"
+
+_OPERATIONS = frozenset({"add", "replace", "merge", "delete"})
+_TERMINAL_EVIDENCE_STATUSES = frozenset({
+    "deleted", "withdrawn", "corrected", "invalidated", "expired",
+})
+#: Config/credential-looking content must never become a persona paragraph.
+_FORBIDDEN_RE = re.compile(
+    r"(?i)(api[_-]?key|apikey|secret|password|passwd|credential|"
+    r"access[_-]?token|refresh[_-]?token|base[_-]?url|voice[_-]?id|"
+    r"model[_-]?name|密钥|凭据|音色|模型路径)",
+)
+_JSON_FENCE_RE = re.compile(
+    r"^\x60{3}(?:json)?\s*|\s*\x60{3}$", re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class EvolutionSettings:
+    """B12 policy; defaults are the design §9.1 initial operating values."""
+
+    enabled: bool = False
+    tier: str = "summary"
+    max_operations: int = 4
+    max_section_chars: int = 2000
+    max_evidence: int = 8
+    proposal_ttl_hours: float = 72.0
+    timeout_s: float = 60.0
+    max_output_tokens: int = 1200
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.enabled, bool):
+            raise ValueError("enabled must be a bool")
+        tier = str(self.tier or "").strip()
+        if not tier:
+            raise ValueError("tier must be nonempty")
+        if not 1 <= int(self.max_operations) <= 16:
+            raise ValueError("max_operations must be between 1 and 16")
+        if not 1 <= int(self.max_section_chars) <= MAX_SECTION_TEXT:
+            raise ValueError(
+                f"max_section_chars must be between 1 and {MAX_SECTION_TEXT}",
+            )
+        if not 1 <= int(self.max_evidence) <= 32:
+            raise ValueError("max_evidence must be between 1 and 32")
+        if float(self.proposal_ttl_hours) <= 0:
+            raise ValueError("proposal_ttl_hours must be positive")
+        if float(self.timeout_s) <= 0:
+            raise ValueError("timeout_s must be positive")
+        if int(self.max_output_tokens) <= 0:
+            raise ValueError("max_output_tokens must be positive")
+
+
+@dataclass(frozen=True)
+class ProposalRequest:
+    """One proposal request; base_revision is the card revision the caller saw."""
+
+    base_revision: int
+    focus_sections: Sequence[str] = ()
+    reason: str = ""
+    request_id: str = ""
+    source_refs: Sequence[str] = ()
+
+    def __post_init__(self) -> None:
+        if isinstance(self.base_revision, bool) or not isinstance(
+            self.base_revision, int,
+        ) or self.base_revision < 0:
+            raise ValueError("base_revision must be a nonnegative int")
+        focus = tuple(
+            str(item).strip() for item in self.focus_sections or ()
+            if str(item).strip()
+        )
+        refs = tuple(
+            str(item).strip() for item in self.source_refs or ()
+            if str(item).strip()
+        )
+        object.__setattr__(self, "focus_sections", focus)
+        object.__setattr__(self, "source_refs", refs)
+        object.__setattr__(self, "reason", str(self.reason or "")[:400])
+        object.__setattr__(self, "request_id", str(self.request_id or "")[:200])
+
+
+@dataclass(frozen=True)
+class ProposalReceipt:
+    """Result of one proposal attempt; proposal is the persisted row when any."""
+
+    status: str
+    proposal_id: str = ""
+    validation: Mapping[str, Any] | None = None
+    reason: str | None = None
+    proposal: Mapping[str, Any] | None = None
+
+
+def _character(value: Any) -> str:
+    name = str(value or "").strip()
+    if not name:
+        raise ValueError("character must be nonempty")
+    return name
+
+
+def _now_iso(clock: Clock) -> str:
+    return clock.now().isoformat()
+
+
+def _check(name: str, ok: bool, reason: str | None = None) -> dict[str, Any]:
+    row: dict[str, Any] = {"name": name, "ok": bool(ok)}
+    if reason:
+        row["reason"] = reason
+    return row
+
+
+def _validation(
+    checks: Sequence[Mapping[str, Any]], reason: str | None,
+) -> dict[str, Any]:
+    return {
+        "checks": [dict(item) for item in checks],
+        "ok": reason is None,
+        "reason": reason or "",
+    }
+
+
+def _rejected(
+    reason: str, *, validation: Mapping[str, Any] | None = None,
+) -> ProposalReceipt:
+    return ProposalReceipt(status="rejected", reason=reason, validation=validation)
+
+
+def _normalize_request(request: Any) -> ProposalRequest:
+    if isinstance(request, ProposalRequest):
+        return request
+    if isinstance(request, Mapping):
+        return ProposalRequest(
+            base_revision=int(request.get("base_revision") or 0),
+            focus_sections=request.get("focus_sections") or (),
+            reason=request.get("reason") or "",
+            request_id=request.get("request_id") or "",
+            source_refs=request.get("source_refs") or (),
+        )
+    raise ValueError("request must be a ProposalRequest or mapping")
+
+
+def _row_text(row: Mapping[str, Any]) -> str:
+    for key in ("text", "claim", "summary", "statement"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _row_ref(row: Mapping[str, Any]) -> str:
+    for key in ("source_ref", "source_key", "id", "growth_id",
+                "reflection_id", "fact_id"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    refs = row.get("source_refs")
+    if isinstance(refs, (list, tuple)):
+        for item in refs:
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+    return ""
+
+
+def _row_subject(row: Mapping[str, Any]) -> str:
+    value = row.get("subject")
+    return value.strip() if isinstance(value, str) else ""
+
+
+class EvolutionService:
+    """Proposal-only B12 service; the card service remains the only card writer."""
+
+    def __init__(
+        self,
+        *,
+        roots: StorageRoots,
+        store: EvolutionStore,
+        card_service: PersonaCardService,
+        evidence_provider: Any,
+        barrier: Any,
+        journal: Any,
+        clock: Clock,
+        permit: WritePermit,
+        model: ModelInvoker | None = None,
+        settings: EvolutionSettings | None = None,
+    ) -> None:
+        self._roots = roots
+        self._store = store
+        self._card = card_service
+        self._evidence_provider = evidence_provider
+        self._barrier = barrier
+        self._journal = journal
+        self._clock = clock
+        self._permit = permit
+        self._model = model
+        self._settings = settings if settings is not None else EvolutionSettings()
+        self._locks: dict[str, threading.RLock] = {}
+        self._locks_guard = threading.Lock()
+        self._async_locks: dict[str, asyncio.Lock] = {}
+        self._ensure_event_vocabulary()
+        if journal is not None:
+            try:
+                journal.register_handler(
+                    EVT_PERSONA_EVOLUTION_PROPOSED, self._replay_proposal,
+                )
+            except Exception:  # noqa: BLE001 - an optional journal may be read-only
+                pass
+
+    # -- wiring ---------------------------------------------------------
+
+    @property
+    def settings(self) -> EvolutionSettings:
+        return self._settings
+
+    def _lock(self, character: str) -> threading.RLock:
+        with self._locks_guard:
+            lock = self._locks.get(character)
+            if lock is None:
+                lock = threading.RLock()
+                self._locks[character] = lock
+            return lock
+
+    def _async_lock(self, character: str) -> asyncio.Lock:
+        lock = self._async_locks.get(character)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._async_locks[character] = lock
+        return lock
+
+    def _ensure_event_vocabulary(self) -> None:
+        """Allow the new event on journals built before B12 (same as B10)."""
+        journal = self._journal
+        if journal is None:
+            return
+        types = getattr(journal, "_event_types", None)
+        if isinstance(types, frozenset) and EVT_PERSONA_EVOLUTION_PROPOSED not in types:
+            try:
+                journal._event_types = types | {EVT_PERSONA_EVOLUTION_PROPOSED}
+            except Exception:  # noqa: BLE001 - journal stays read-only for us
+                pass
+
+    # -- reads ----------------------------------------------------------
+
+    def get(self, character: str, proposal_id: str) -> dict[str, Any] | None:
+        return self._store.get(_character(character), proposal_id)
+
+    def list(
+        self, character: str, *, status: str | None = None, limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._store.list(_character(character), status=status, limit=limit)
+
+    # -- propose --------------------------------------------------------
+
+    async def propose(self, character: str, request: Any) -> ProposalReceipt:
+        name = _character(character)
+        req = _normalize_request(request)
+        settings = self._settings
+        if not settings.enabled:
+            return ProposalReceipt(status="disabled", reason=REASON_DISABLED)
+
+        if req.request_id:
+            existing = self._store.find_by_request_id(name, req.request_id)
+            if existing is not None:
+                return self._duplicate_receipt(existing)
+
+        snapshot = self._card.get(name)
+        if snapshot.revision < 1 or not snapshot.sections:
+            return _rejected(
+                REASON_NOT_INITIALIZED,
+                validation=_validation(
+                    [_check("card_initialized", False, REASON_NOT_INITIALIZED)],
+                    REASON_NOT_INITIALIZED,
+                ),
+            )
+        if req.base_revision != snapshot.revision:
+            return _rejected(
+                REASON_BASE_REVISION_CONFLICT,
+                validation=_validation(
+                    [_check(
+                        "base_revision", False, REASON_BASE_REVISION_CONFLICT,
+                    )],
+                    REASON_BASE_REVISION_CONFLICT,
+                ),
+            )
+
+        async with self._async_lock(name):
+            if req.request_id:
+                existing = self._store.find_by_request_id(name, req.request_id)
+                if existing is not None:
+                    return self._duplicate_receipt(existing)
+
+            rows, evidence_reason, evidence_validation = (
+                await self._collect_evidence(name, req, snapshot)
+            )
+            if evidence_reason is not None:
+                return _rejected(evidence_reason, validation=evidence_validation)
+
+            selected, section_reason, section_validation = self._select_sections(
+                snapshot, req,
+            )
+            if section_reason is not None:
+                return _rejected(section_reason, validation=section_validation)
+
+            barrier_snapshot = self._barrier_snapshot(name)
+            started = self._clock.monotonic()
+            try:
+                raw = await self._invoke_model(
+                    name, req, selected, rows, snapshot,
+                )
+            except (asyncio.TimeoutError, TimeoutError):
+                return _rejected(
+                    REASON_TIMEOUT,
+                    validation=_validation(
+                        [_check("model", False, REASON_TIMEOUT)], REASON_TIMEOUT,
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - provider failures are data, not crashes
+                return _rejected(
+                    REASON_MODEL_ERROR,
+                    validation=_validation(
+                        [_check("model", False, REASON_MODEL_ERROR)],
+                        REASON_MODEL_ERROR,
+                    ),
+                )
+            elapsed_ms = int(max(0.0, self._clock.monotonic() - started) * 1000)
+
+            current = self._card.get(name)
+            if current.revision != snapshot.revision:
+                return _rejected(
+                    REASON_BASE_REVISION_CONFLICT,
+                    validation=_validation(
+                        [_check(
+                            "base_revision", False,
+                            REASON_BASE_REVISION_CONFLICT,
+                        )],
+                        REASON_BASE_REVISION_CONFLICT,
+                    ),
+                )
+            if self._barrier_stale(name, barrier_snapshot):
+                return _rejected(
+                    REASON_SOURCE_DELETED,
+                    validation=_validation(
+                        [_check("barrier", False, REASON_SOURCE_DELETED)],
+                        REASON_SOURCE_DELETED,
+                    ),
+                )
+            if self._evidence_blocked(name, rows):
+                return _rejected(
+                    REASON_SOURCE_DELETED,
+                    validation=_validation(
+                        [_check("evidence", False, REASON_SOURCE_DELETED)],
+                        REASON_SOURCE_DELETED,
+                    ),
+                )
+
+            parsed, parse_reason = self._parse_model_output(raw)
+            if parse_reason is not None:
+                return _rejected(
+                    parse_reason,
+                    validation=_validation(
+                        [_check("model_output", False, parse_reason)], parse_reason,
+                    ),
+                )
+            if not parsed["operations"]:
+                return _rejected(
+                    REASON_NO_CHANGE,
+                    validation=_validation(
+                        [_check("operations", False, REASON_NO_CHANGE)],
+                        REASON_NO_CHANGE,
+                    ),
+                )
+            operations, validation_reason, validation = self._validate_operations(
+                name, req, selected, rows, snapshot, parsed,
+            )
+            if validation_reason is not None:
+                return _rejected(validation_reason, validation=validation)
+
+            proposal = self._build_proposal(
+                name, req, snapshot, operations, rows, parsed,
+                validation=validation, elapsed_ms=elapsed_ms,
+                raw_output=raw if isinstance(raw, str) else "",
+            )
+            try:
+                stored = self._record_proposal(name, proposal)
+            except Exception as exc:  # noqa: BLE001 - store/permit failures are receipts
+                code = getattr(exc, "code", "")
+                reason = (
+                    REASON_PROPOSAL_LIMIT
+                    if code == "proposal_limit" else REASON_VALIDATION_FAILED
+                )
+                return _rejected(
+                    reason,
+                    validation=_validation(
+                        [_check("store", False, reason)], reason,
+                    ),
+                )
+            return ProposalReceipt(
+                status="proposed",
+                proposal_id=str(stored.get("proposal_id") or ""),
+                validation=validation,
+                reason=None,
+                proposal=stored,
+            )
+
+    # -- evidence and sections ------------------------------------------
+
+    async def _collect_evidence(
+        self, name: str, req: ProposalRequest, snapshot: Any,
+    ) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
+        provider = self._evidence_provider
+        if provider is None:
+            return [], REASON_INSUFFICIENT_EVIDENCE, _validation(
+                [_check("evidence", False, REASON_INSUFFICIENT_EVIDENCE)],
+                REASON_INSUFFICIENT_EVIDENCE,
+            )
+        try:
+            raw = await self._call_provider(provider, name, req)
+        except Exception:  # noqa: BLE001 - evidence provider failure is a receipt
+            return [], REASON_INSUFFICIENT_EVIDENCE, _validation(
+                [_check("evidence", False, REASON_INSUFFICIENT_EVIDENCE)],
+                REASON_INSUFFICIENT_EVIDENCE,
+            )
+        if isinstance(raw, Mapping):
+            if isinstance(raw.get("rows"), (list, tuple)):
+                raw = raw.get("rows")
+            elif isinstance(raw.get("items"), (list, tuple)):
+                raw = raw.get("items")
+            else:
+                raw = [raw]
+        if not isinstance(raw, (list, tuple)):
+            raw = []
+        rows = [copy.deepcopy(dict(row)) for row in raw if isinstance(row, Mapping)]
+        rows = rows[: self._settings.max_evidence]
+        if not rows:
+            return [], REASON_INSUFFICIENT_EVIDENCE, _validation(
+                [_check("evidence", False, REASON_INSUFFICIENT_EVIDENCE)],
+                REASON_INSUFFICIENT_EVIDENCE,
+            )
+        for row in rows:
+            status = str(row.get("status") or "").strip().lower()
+            if (row.get("deleted") or row.get("invalidated_at")
+                    or row.get("corrected")
+                    or status in _TERMINAL_EVIDENCE_STATUSES):
+                return [], REASON_SOURCE_DELETED, _validation(
+                    [_check("evidence", False, REASON_SOURCE_DELETED)],
+                    REASON_SOURCE_DELETED,
+                )
+        if self._evidence_blocked(name, rows):
+            return [], REASON_SOURCE_DELETED, _validation(
+                [_check("evidence", False, REASON_SOURCE_DELETED)],
+                REASON_SOURCE_DELETED,
+            )
+        refs = {_row_ref(row) for row in rows if _row_ref(row)}
+        missing = [ref for ref in req.source_refs if ref not in refs]
+        if missing:
+            return [], REASON_SOURCE_DELETED, _validation(
+                [_check("evidence", False, REASON_SOURCE_DELETED)],
+                REASON_SOURCE_DELETED,
+            )
+        return rows, None, _validation([_check("evidence", True)], None)
+
+    async def _call_provider(
+        self, provider: Any, name: str, req: ProposalRequest,
+    ) -> Any:
+        fn = getattr(provider, "collect", provider)
+        result: Any
+        try:
+            result = fn(name, req)
+        except TypeError:
+            try:
+                result = fn(name, list(req.source_refs))
+            except TypeError:
+                result = fn(name)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    def _select_sections(
+        self, snapshot: Any, req: ProposalRequest,
+    ) -> tuple[list[CardSection], str | None, dict[str, Any]]:
+        by_id = {section.section_id: section for section in snapshot.sections}
+        selected: list[CardSection] = []
+        if req.focus_sections:
+            for section_id in req.focus_sections:
+                section = by_id.get(section_id)
+                if section is None:
+                    reason = REASON_VALIDATION_FAILED
+                    return [], reason, _validation(
+                        [_check("section", False, "unknown_section")], reason,
+                    )
+                if section.frozen:
+                    return [], REASON_SECTION_FROZEN, _validation(
+                        [_check("section", False, REASON_SECTION_FROZEN)],
+                        REASON_SECTION_FROZEN,
+                    )
+                if not section.editable_by.get("evolution"):
+                    return [], REASON_SECTION_NOT_EDITABLE, _validation(
+                        [_check("section", False, REASON_SECTION_NOT_EDITABLE)],
+                        REASON_SECTION_NOT_EDITABLE,
+                    )
+                selected.append(section)
+        else:
+            selected = [
+                section for section in snapshot.sections
+                if section.editable_by.get("evolution") and not section.frozen
+            ]
+        if not selected:
+            frozen = any(section.frozen for section in snapshot.sections)
+            reason = (
+                REASON_SECTION_FROZEN if frozen else REASON_SECTION_NOT_EDITABLE
+            )
+            return [], reason, _validation(
+                [_check("section", False, reason)], reason,
+            )
+        return selected, None, _validation([_check("section", True)], None)
+
+    # -- model ----------------------------------------------------------
+
+    async def _invoke_model(
+        self,
+        name: str,
+        req: ProposalRequest,
+        selected: Sequence[CardSection],
+        rows: Sequence[Mapping[str, Any]],
+        snapshot: Any,
+    ) -> str:
+        if self._model is None:
+            raise RuntimeError("no ModelInvoker configured")
+        messages = self._build_messages(name, req, selected, rows, snapshot)
+        result = self._model.invoke(
+            self._settings.tier,
+            messages,
+            max_output_tokens=self._settings.max_output_tokens,
+            timeout_s=self._settings.timeout_s,
+            purpose=PURPOSE_PERSONA_EVOLUTION_PROPOSAL,
+        )
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    def _build_messages(
+        self,
+        name: str,
+        req: ProposalRequest,
+        selected: Sequence[CardSection],
+        rows: Sequence[Mapping[str, Any]],
+        snapshot: Any,
+    ) -> list[dict[str, str]]:
+        sections_payload = [
+            {
+                "section_id": section.section_id,
+                "kind": section.kind,
+                "text": section.text,
+                "scope": dict(section.scope),
+                "editable_by": dict(section.editable_by),
+            }
+            for section in selected
+        ]
+        evidence_payload = []
+        for row in rows:
+            evidence_payload.append({
+                "source_ref": _row_ref(row),
+                "kind": row.get("kind") or row.get("memory_kind") or "",
+                "text": _row_text(row),
+                "subject": _row_subject(row),
+                "scene": row.get("scene") or row.get("applies_to") or "",
+            })
+        constraints = {
+            "base_revision": snapshot.revision,
+            "max_operations": self._settings.max_operations,
+            "max_section_chars": self._settings.max_section_chars,
+            "operations": sorted(_OPERATIONS),
+            "open_section_ids": [section.section_id for section in selected],
+            "forbidden": "config, credentials, model/voice/path fields",
+        }
+        system = (
+            "You propose local edits to a character persona card. Return ONLY a "
+            "JSON object: {\"operations\":[{\"op\":\"add|replace|merge|delete\","
+            "\"section_id\":\"...\",\"text\":\"...\"}],\"reason\":\"...\"}. "
+            "Use only open_section_ids for replace/merge/delete; add needs a new "
+            "section_id. Never include config, credentials, model, voice or path "
+            "fields. Keep each text within max_section_chars. If nothing should "
+            "change, return {\"operations\":[],\"reason\":\"no_change\"}."
+        )
+        user = json.dumps({
+            "character": name,
+            "reason": req.reason,
+            "focus_sections": list(req.focus_sections),
+            "source_refs": list(req.source_refs),
+            "sections": sections_payload,
+            "evidence": evidence_payload,
+            "constraints": constraints,
+        }, ensure_ascii=False)
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
+    def _parse_model_output(
+        self, raw: Any,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if isinstance(raw, Mapping):
+            operations = raw.get("operations")
+            reason = raw.get("reason")
+            if not isinstance(operations, list) or not isinstance(reason, str):
+                return None, REASON_INVALID_MODEL_OUTPUT
+            return {
+                "operations": copy.deepcopy(operations),
+                "reason": reason.strip()[:400],
+            }, None
+        if not isinstance(raw, str) or not raw.strip():
+            return None, REASON_INVALID_MODEL_OUTPUT
+        text = _JSON_FENCE_RE.sub("", raw.strip()).strip()
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            return None, REASON_INVALID_MODEL_OUTPUT
+        try:
+            parsed = json.loads(text[start:end + 1])
+        except (TypeError, ValueError):
+            return None, REASON_INVALID_MODEL_OUTPUT
+        if not isinstance(parsed, dict):
+            return None, REASON_INVALID_MODEL_OUTPUT
+        operations = parsed.get("operations")
+        if not isinstance(operations, list):
+            return None, REASON_INVALID_MODEL_OUTPUT
+        reason = parsed.get("reason")
+        if not isinstance(reason, str):
+            return None, REASON_INVALID_MODEL_OUTPUT
+        return {"operations": operations, "reason": reason.strip()[:400]}, None
+
+    # -- deterministic validation ---------------------------------------
+
+    def _validate_operations(
+        self,
+        name: str,
+        req: ProposalRequest,
+        selected: Sequence[CardSection],
+        rows: Sequence[Mapping[str, Any]],
+        snapshot: Any,
+        parsed: Mapping[str, Any],
+    ) -> tuple[list[dict[str, Any]], str | None, dict[str, Any]]:
+        checks: list[dict[str, Any]] = []
+        settings = self._settings
+        by_id = {section.section_id: section for section in snapshot.sections}
+        open_ids = {section.section_id for section in selected}
+        raw_ops = parsed.get("operations")
+        if not isinstance(raw_ops, list):
+            checks.append(_check("operations", False, REASON_INVALID_MODEL_OUTPUT))
+            return [], REASON_INVALID_MODEL_OUTPUT, _validation(
+                checks, REASON_INVALID_MODEL_OUTPUT,
+            )
+        if not 1 <= len(raw_ops) <= settings.max_operations:
+            checks.append(_check("operations", False, REASON_VALIDATION_FAILED))
+            return [], REASON_VALIDATION_FAILED, _validation(
+                checks, REASON_VALIDATION_FAILED,
+            )
+        checks.append(_check("operations", True))
+
+        normalized: list[dict[str, Any]] = []
+        seen_sections: set[str] = set()
+        for raw in raw_ops:
+            if not isinstance(raw, Mapping):
+                checks.append(_check("operation_shape", False, REASON_VALIDATION_FAILED))
+                return [], REASON_VALIDATION_FAILED, _validation(
+                    checks, REASON_VALIDATION_FAILED,
+                )
+            op_type = str(raw.get("op") or raw.get("action") or "").strip()
+            section_id = str(raw.get("section_id") or "").strip()
+            text = raw.get("text")
+            text = text.strip() if isinstance(text, str) else ""
+            if op_type not in _OPERATIONS or not section_id:
+                checks.append(_check("operation_shape", False, REASON_VALIDATION_FAILED))
+                return [], REASON_VALIDATION_FAILED, _validation(
+                    checks, REASON_VALIDATION_FAILED,
+                )
+            if section_id in seen_sections:
+                checks.append(_check("duplicate_section", False, REASON_VALIDATION_FAILED))
+                return [], REASON_VALIDATION_FAILED, _validation(
+                    checks, REASON_VALIDATION_FAILED,
+                )
+            seen_sections.add(section_id)
+            if op_type == "add":
+                if section_id in by_id:
+                    checks.append(_check("section_add", False, REASON_VALIDATION_FAILED))
+                    return [], REASON_VALIDATION_FAILED, _validation(
+                        checks, REASON_VALIDATION_FAILED,
+                    )
+                editable = raw.get("editable_by")
+                if not isinstance(editable, Mapping) or not editable.get("evolution"):
+                    editable = {"user": True, "evolution": True}
+                normalized_op_editable = dict(editable)
+            else:
+                section = by_id.get(section_id)
+                if section is None or section_id not in open_ids:
+                    reason = (
+                        REASON_SECTION_FROZEN
+                        if section is not None and section.frozen
+                        else REASON_SECTION_NOT_EDITABLE
+                    )
+                    checks.append(_check("section_open", False, reason))
+                    return [], reason, _validation(checks, reason)
+            if op_type != "delete":
+                if not text:
+                    checks.append(_check("text", False, REASON_VALIDATION_FAILED))
+                    return [], REASON_VALIDATION_FAILED, _validation(
+                        checks, REASON_VALIDATION_FAILED,
+                    )
+                limit = min(settings.max_section_chars, MAX_SECTION_TEXT)
+                if len(text) > limit:
+                    checks.append(_check("text_length", False, REASON_VALIDATION_FAILED))
+                    return [], REASON_VALIDATION_FAILED, _validation(
+                        checks, REASON_VALIDATION_FAILED,
+                    )
+            if _FORBIDDEN_RE.search(text) or _FORBIDDEN_RE.search(
+                str(parsed.get("reason") or ""),
+            ):
+                checks.append(_check("config_fields", False, REASON_VALIDATION_FAILED))
+                return [], REASON_VALIDATION_FAILED, _validation(
+                    checks, REASON_VALIDATION_FAILED,
+                )
+            normalized_op: dict[str, Any] = {
+                "op": op_type,
+                "section_id": section_id,
+            }
+            if op_type != "delete":
+                normalized_op["text"] = text
+            for key in ("kind", "scope", "editable_by"):
+                if key in raw:
+                    normalized_op[key] = copy.deepcopy(raw.get(key))
+            if op_type == "add":
+                normalized_op["editable_by"] = dict(normalized_op_editable)
+            normalized.append(normalized_op)
+
+        checks.append(_check("section_open", True))
+        checks.append(_check("text_length", True))
+        checks.append(_check("config_fields", True))
+
+        for op in normalized:
+            scope = op.get("scope")
+            subject = scope.get("subject") if isinstance(scope, Mapping) else None
+            if not isinstance(subject, str) or not subject.strip():
+                continue
+            subjects = {_row_subject(row) for row in rows if _row_subject(row)}
+            if subjects and subject.strip() not in subjects:
+                checks.append(_check("scope_subject", False, REASON_VALIDATION_FAILED))
+                return [], REASON_VALIDATION_FAILED, _validation(
+                    checks, REASON_VALIDATION_FAILED,
+                )
+        checks.append(_check("scope_subject", True))
+
+        if not rows:
+            checks.append(_check("evidence", False, REASON_INSUFFICIENT_EVIDENCE))
+            return [], REASON_INSUFFICIENT_EVIDENCE, _validation(
+                checks, REASON_INSUFFICIENT_EVIDENCE,
+            )
+        checks.append(_check("evidence", True))
+        checks.append(_check(
+            "base_revision", req.base_revision == snapshot.revision,
+            REASON_BASE_REVISION_CONFLICT if req.base_revision != snapshot.revision else None,
+        ))
+        if req.base_revision != snapshot.revision:
+            return [], REASON_BASE_REVISION_CONFLICT, _validation(
+                checks, REASON_BASE_REVISION_CONFLICT,
+            )
+        return normalized, None, _validation(checks, None)
+
+    # -- proposal persistence -------------------------------------------
+
+    def _build_proposal(
+        self,
+        name: str,
+        req: ProposalRequest,
+        snapshot: Any,
+        operations: Sequence[Mapping[str, Any]],
+        rows: Sequence[Mapping[str, Any]],
+        parsed: Mapping[str, Any],
+        *,
+        validation: Mapping[str, Any],
+        elapsed_ms: int,
+        raw_output: str,
+    ) -> dict[str, Any]:
+        now = _now_iso(self._clock)
+        seed = req.request_id or uuid.uuid4().hex
+        proposal_id = "evo_" + hashlib.sha1(
+            f"{name}|{seed}".encode("utf-8"),
+        ).hexdigest()[:16]
+        source_refs: list[str] = list(req.source_refs)
+        growth_ids: list[str] = []
+        reflection_ids: list[str] = []
+        fact_ids: list[str] = []
+        for row in rows:
+            ref = _row_ref(row)
+            if ref and ref not in source_refs:
+                source_refs.append(ref)
+            kind = str(row.get("kind") or row.get("memory_kind") or "").lower()
+            growth_id = row.get("growth_id")
+            reflection_id = row.get("reflection_id")
+            fact_id = row.get("fact_id")
+            if isinstance(growth_id, str) and growth_id:
+                growth_ids.append(growth_id)
+            elif kind == "growth" and ref:
+                growth_ids.append(ref)
+            if isinstance(reflection_id, str) and reflection_id:
+                reflection_ids.append(reflection_id)
+            elif kind in ("reflection", "growth") and ref:
+                reflection_ids.append(ref)
+            if isinstance(fact_id, str) and fact_id:
+                fact_ids.append(fact_id)
+            elif kind == "fact" and ref:
+                fact_ids.append(ref)
+        reason = str(parsed.get("reason") or req.reason or "")[:400]
+        return {
+            "proposal_id": proposal_id,
+            "status": STATUS_PROPOSED,
+            "created_at": now,
+            "updated_at": now,
+            "base_revision": int(snapshot.revision),
+            "operations": [copy.deepcopy(dict(op)) for op in operations],
+            "evidence": {
+                "source_refs": _dedupe(source_refs),
+                "growth_ids": _dedupe(growth_ids),
+                "reflection_ids": _dedupe(reflection_ids),
+                "fact_ids": _dedupe(fact_ids),
+            },
+            "model": {
+                "tier": self._settings.tier,
+                "purpose": PURPOSE_PERSONA_EVOLUTION_PROPOSAL,
+                "tokens": max(1, len(raw_output) // 4) if raw_output else 0,
+                "elapsed_ms": int(elapsed_ms),
+            },
+            "validation": copy.deepcopy(dict(validation)),
+            "reason": reason,
+            "request_id": req.request_id,
+        }
+
+    def _record_proposal(
+        self, name: str, proposal: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        self._append_event(name, proposal)
+        return self._store.append(name, proposal)
+
+    def _duplicate_receipt(self, proposal: Mapping[str, Any]) -> ProposalReceipt:
+        return ProposalReceipt(
+            status="duplicate",
+            proposal_id=str(proposal.get("proposal_id") or ""),
+            validation=copy.deepcopy(proposal.get("validation") or {}),
+            reason=REASON_DUPLICATE_REQUEST,
+            proposal=copy.deepcopy(dict(proposal)),
+        )
+
+    def _append_event(self, name: str, proposal: Mapping[str, Any]) -> None:
+        journal = self._journal
+        if journal is None:
+            return
+        try:
+            journal.append(
+                name,
+                EVT_PERSONA_EVOLUTION_PROPOSED,
+                {"character": name, "proposal": copy.deepcopy(dict(proposal))},
+            )
+        except Exception:  # noqa: BLE001 - the store remains the durable proposal
+            pass
+
+    def _replay_proposal(self, character: str, payload: Mapping[str, Any]) -> bool:
+        if not isinstance(payload, Mapping):
+            raise RuntimeError("evolution proposal payload must be an object")
+        proposal = payload.get("proposal")
+        if isinstance(proposal, Mapping):
+            self._store.upsert(character, proposal)
+            return True
+        proposals = payload.get("proposals")
+        if isinstance(proposals, (list, tuple)):
+            for item in proposals:
+                if isinstance(item, Mapping):
+                    self._store.upsert(character, item)
+            return True
+        raise RuntimeError("evolution proposal payload has no proposal snapshot")
+
+    # -- B13-facing lifecycle -------------------------------------------
+
+    def withdraw(self, character: str, proposal_id: str) -> dict[str, Any] | None:
+        name = _character(character)
+        with self._lock(name):
+            existing = self._store.get(name, proposal_id)
+            if existing is None:
+                return None
+            if existing.get("status") != STATUS_PROPOSED:
+                return existing
+            updated = {
+                **existing,
+                "status": STATUS_WITHDRAWN,
+                "reason": "user_withdraw",
+                "updated_at": _now_iso(self._clock),
+            }
+            self._append_event(name, updated)
+            return self._store.update(
+                name, proposal_id,
+                {"status": STATUS_WITHDRAWN, "reason": "user_withdraw"},
+            )
+
+    def expire_stale(self, character: str) -> int:
+        name = _character(character)
+        cutoff = (
+            self._clock.now()
+            - timedelta(hours=float(self._settings.proposal_ttl_hours))
+        ).isoformat()
+        return self._store.expire_proposed(name, cutoff)
+
+    # -- barrier helpers ------------------------------------------------
+
+    def _barrier_snapshot(self, name: str) -> Any:
+        barrier = self._barrier
+        if barrier is None:
+            return None
+        try:
+            snapshot = getattr(barrier, "snapshot", None)
+            return snapshot(name) if callable(snapshot) else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _barrier_stale(self, name: str, snapshot: Any) -> bool:
+        if snapshot is None or self._barrier is None:
+            return False
+        try:
+            return bool(self._barrier.is_stale(name, snapshot))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _evidence_blocked(
+        self, name: str, rows: Sequence[Mapping[str, Any]],
+    ) -> bool:
+        barrier = self._barrier
+        if barrier is None:
+            return False
+        for row in rows:
+            try:
+                if barrier.blocks_row(name, row):
+                    return True
+            except Exception:  # noqa: BLE001 - broken barrier must not invent data
+                pass
+            text = _row_text(row)
+            if text:
+                try:
+                    if barrier.blocks_text(name, text):
+                        return True
+                except Exception:  # noqa: BLE001
+                    pass
+            ref = _row_ref(row)
+            if ref:
+                for target_type in ("fact", "reflection", "growth", "persona"):
+                    try:
+                        if barrier.blocks_target(name, target_type, ref):
+                            return True
+                    except Exception:  # noqa: BLE001
+                        pass
+        return False
+
+
+def _dedupe(values: Sequence[str]) -> list[str]:
+    out: list[str] = []
+    for value in values:
+        if isinstance(value, str) and value and value not in out:
+            out.append(value)
+    return out

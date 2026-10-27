@@ -1,0 +1,126 @@
+/* 樱潮环境层：素材分层运动，正文与控件保持清楚。 */
+.sakura-field{
+  position:fixed;inset:0;z-index:5;overflow:hidden;pointer-events:none;
+  contain:strict;
+}
+.sakura-fall{
+  position:absolute;top:-40px;left:var(--petal-x);width:var(--petal-size);height:var(--petal-size);
+  opacity:0;animation:sakura-descent var(--petal-duration) linear var(--petal-delay) infinite;
+}
+.sakura-fall i{
+  display:block;width:100%;height:100%;background:url("assets/motion/sakura-petal.webp") center/contain no-repeat;
+  animation:sakura-flutter var(--flutter-duration) ease-in-out var(--petal-delay) infinite alternate;
+}
+@keyframes sakura-descent{
+  0%{opacity:0;transform:translate3d(0,-30px,0)}
+  12%,78%{opacity:var(--petal-opacity)}
+  100%{opacity:0;transform:translate3d(var(--petal-drift),calc(100vh + 100px),0)}
+}
+@keyframes sakura-flutter{
+  0%{transform:translateX(-14px) rotateZ(-24deg) rotateY(12deg)}
+  50%{transform:translateX(10px) rotateZ(60deg) rotateY(65deg)}
+  100%{transform:translateX(-5px) rotateZ(156deg) rotateY(20deg)}
+}
+
+/* 悬挂点与原插画的绳结位置重合。 */
+.windchime-stage{position:absolute;inset:0 0 0 auto;width:614px;z-index:3;pointer-events:none}
+.windchime{
+  position:absolute;left:73.5%;top:-8px;font-size:90px;width:1em;height:3em;transform:translateX(-50%);
+  padding:0;border:0;background:none;pointer-events:auto;cursor:var(--cursor-pointer);
+  -webkit-tap-highlight-color:transparent;
+}
+.windchime-rig{position:absolute;inset:0;display:block;transform-origin:50% 0;pointer-events:none}
+.windchime img{
+  display:block;width:100%;height:100%;object-fit:contain;user-select:none;
+  filter:saturate(.75) contrast(.94) brightness(1.035);
+}
+.windchime-cord,.windchime-thread,.windchime-tie{
+  position:absolute;left:50%;width:1px;transform:translateX(-50%);
+  background:linear-gradient(90deg,rgba(34,91,100,.64),rgba(157,193,189,.9));
+}
+.windchime-cord{top:0;height:.5em}
+.windchime-glass{position:absolute;left:0;top:.36em;width:1em;height:1.1em;z-index:2}
+.windchime-chain{
+  position:absolute;left:50%;top:.43em;width:0;height:2.5em;z-index:1;transform-origin:0 0;
+}
+.windchime-thread{top:0;height:.83em}
+.windchime .windchime-bead{position:absolute;left:-.08em;top:.75em;width:.16em;height:.19em}
+.windchime-paper-joint{position:absolute;left:0;top:.86em;width:0;height:1.55em;transform-origin:0 0}
+.windchime-tie{top:0;height:.37em}
+.windchime-paper{position:absolute;left:-.105em;top:.27em;width:.21em;height:1.18em}
+.windchime-paper-upper,.windchime-paper-lower{
+  position:absolute;left:0;width:100%;
+  /* 仅取纸面内部水彩纹理，用平滑轮廓避开原图的深色毛边。 */
+  background-color:#7fb3b7;
+  background-image:url("assets/motion/windchime-paper-v2.webp");
+  background-repeat:no-repeat;background-size:210% 1.36em;
+  backface-visibility:hidden;
+  clip-path:inset(0 round .01em);
+}
+.windchime-paper-upper{top:0;height:.72em;background-position:center -.12em}
+.windchime-paper-upper::after{
+  content:"";position:absolute;left:50%;top:.025em;width:.045em;height:.045em;
+  box-sizing:border-box;border:.008em solid #cba66a;border-radius:50%;
+  background:#4f7980;transform:translateX(-50%);
+}
+.windchime-paper-lower{
+  top:.71em;height:.47em;background-position:center -.83em;transform-origin:50% 0;
+}
+.windchime:focus-visible{outline:1px solid var(--sea-2);outline-offset:7px;border-radius:48%}
+.windchime-hint{
+  position:absolute;top:130px;right:76px;white-space:nowrap;padding:5px 10px;
+  font-family:var(--sans);font-size:11.5px;line-height:1.5;letter-spacing:.06em;color:var(--sea-deep);
+  border:1px solid rgba(91,167,180,.2);border-radius:20px;background:rgba(255,253,248,.9);
+  opacity:0;transform:translateY(4px);transition:opacity .2s,transform .2s;pointer-events:none;
+}
+.windchime:hover .windchime-hint,.windchime:focus-visible .windchime-hint,.windchime.is-ringing .windchime-hint{
+  opacity:1;transform:translateY(0);
+}
+
+/* 水彩海面：远、中、近三层具有不同的流速与呼吸节奏。 */
+.foot{height:128px}
+.foot .wave{
+  height:92px;background:none;opacity:1;mix-blend-mode:normal;animation:none;
+  -webkit-mask-image:none;mask-image:none;overflow:hidden;
+}
+.ocean-layer{
+  position:absolute;left:-1080px;width:calc(100% + 2160px);height:148px;bottom:-20px;
+  opacity:.23;animation:ocean-current var(--current-duration) linear infinite;
+}
+.ocean-layer::before{
+  content:"";position:absolute;inset:0;
+  background:url("assets/motion/ocean-watercolor.webp") repeat-x 0 100%/1080px 100%;
+  animation:ocean-breathe var(--swell-duration) ease-in-out var(--swell-delay) infinite alternate;
+}
+.ocean-back{--current-duration:70s;--swell-duration:7.8s;--swell-delay:-3s}
+.ocean-mid{
+  height:140px;bottom:-30px;opacity:.31;
+  --current-duration:49s;--swell-duration:6.2s;--swell-delay:-1s;animation-direction:reverse;
+}
+.ocean-front{
+  height:128px;bottom:-39px;opacity:.48;
+  --current-duration:36s;--swell-duration:8.4s;--swell-delay:-5s;
+}
+.ocean-front::before{background-position:370px 100%}
+.ocean-mid::before{background-position:680px 100%;filter:saturate(.75)}
+@keyframes ocean-current{to{transform:translate3d(1080px,0,0)}}
+@keyframes ocean-breathe{
+  from{transform:translate3d(0,-4px,0) scaleY(.96)}
+  to{transform:translate3d(0,4px,0) scaleY(1.035)}
+}
+.motion-sr-only{
+  position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+  clip-path:inset(50%);white-space:nowrap;border:0;
+}
+body.motion-idle .sakura-fall,body.motion-idle .sakura-fall i,
+body.motion-idle .ocean-layer,body.motion-idle .ocean-layer::before{
+  animation-play-state:paused;
+}
+body.calm .sakura-field{display:none}
+body.calm .ocean-layer,body.calm .ocean-layer::before{animation:none}
+@media (prefers-reduced-motion:reduce){
+  .sakura-field{display:none}
+  .ocean-layer,.ocean-layer::before{animation:none!important}
+}
+@media (max-width:1560px){.windchime-stage{width:587px}.windchime{font-size:86px}}
+@media (max-width:1520px){.windchime-stage{width:556px}.windchime{font-size:81px}}

@@ -1,0 +1,294 @@
+{
+  "generated_at": "2026-10-23T18:08:10.788102+00:00",
+  "environment": {
+    "python": "3.11.15",
+    "platform": "Windows-10-10.0.22631-SP0",
+    "cpu": "Intel64 Family 6 Model 151 Stepping 2, GenuineIntel",
+    "cpu_count": 12,
+    "concurrency": "sequential (one case at a time)",
+    "vector_backend": "none (BM25 baseline; no embedding provider wired)",
+    "corpus_scale": {
+      "cases": 8,
+      "facts_per_case_max": 3,
+      "total_facts": 17
+    }
+  },
+  "summary": {
+    "cases": 8,
+    "hard_failures": 0,
+    "baseline_gaps": 1,
+    "recall_at_k_mean": 0.857,
+    "irrelevant_injections": 0,
+    "duplicate_mentions": 0,
+    "explicit_ms": {
+      "p50": 0.64,
+      "p95": 1.69,
+      "max": 2.37
+    },
+    "passive_ms": {
+      "p50": 0.74,
+      "p95": 1.25,
+      "max": 2.0
+    }
+  },
+  "cases": [
+    {
+      "case": "cjk_entity_drink",
+      "failure_type": "cjk_entity",
+      "path": "explicit",
+      "query": "乌龙茶",
+      "recalled": [
+        "fact_cjk_entity_drink_1"
+      ],
+      "other_path_ids": [],
+      "expected": [
+        "fact_cjk_entity_drink_1"
+      ],
+      "hit": [
+        "fact_cjk_entity_drink_1"
+      ],
+      "missing": [],
+      "injected": [],
+      "deleted_leaked": [],
+      "duplicate_hits": 0,
+      "recall_at_k": 1.0,
+      "empty_as_expected": null,
+      "elapsed_ms": [
+        1.6680000117048621,
+        0.6364999571815133,
+        0.6146000232547522
+      ],
+      "passive_ms": [
+        0.763899995945394,
+        0.7188000017777085,
+        0.6579000037163496
+      ],
+      "status": "pass"
+    },
+    {
+      "case": "short_latin_term",
+      "failure_type": "cjk_entity",
+      "path": "explicit",
+      "query": "Live2D 模型",
+      "recalled": [
+        "fact_short_latin_term_1"
+      ],
+      "other_path_ids": [],
+      "expected": [
+        "fact_short_latin_term_1"
+      ],
+      "hit": [
+        "fact_short_latin_term_1"
+      ],
+      "missing": [],
+      "injected": [],
+      "deleted_leaked": [],
+      "duplicate_hits": 0,
+      "recall_at_k": 1.0,
+      "empty_as_expected": null,
+      "elapsed_ms": [
+        2.369499998167157,
+        0.5690999096259475,
+        0.5329999839887023
+      ],
+      "passive_ms": [
+        0.735500012524426,
+        0.6096999859437346,
+        0.6044000620022416
+      ],
+      "status": "pass"
+    },
+    {
+      "case": "synonym_paraphrase",
+      "failure_type": "synonym",
+      "path": "explicit",
+      "query": "失眠",
+      "recalled": [],
+      "other_path_ids": [],
+      "expected": [
+        "fact_synonym_paraphrase_1"
+      ],
+      "hit": [],
+      "missing": [
+        "fact_synonym_paraphrase_1"
+      ],
+      "injected": [],
+      "deleted_leaked": [],
+      "duplicate_hits": 0,
+      "recall_at_k": 0.0,
+      "empty_as_expected": null,
+      "elapsed_ms": [
+        1.2751000467687845,
+        0.5227000219747424,
+        0.5088999168947339
+      ],
+      "passive_ms": [
+        0.6021999288350344,
+        0.5992000224068761,
+        0.7741000736132264
+      ],
+      "status": "baseline_gap"
+    },
+    {
+      "case": "reference_continuation",
+      "failure_type": "reference",
+      "path": "passive",
+      "query": "你刚才说的那个",
+      "recalled": [
+        "fact_reference_continuation_1"
+      ],
+      "other_path_ids": [],
+      "expected": [
+        "fact_reference_continuation_1"
+      ],
+      "hit": [
+        "fact_reference_continuation_1"
+      ],
+      "missing": [],
+      "injected": [],
+      "deleted_leaked": [],
+      "duplicate_hits": 0,
+      "recall_at_k": 1.0,
+      "empty_as_expected": null,
+      "elapsed_ms": [
+        1.4640000881627202,
+        0.5719000473618507,
+        0.5283999489620328
+      ],
+      "passive_ms": [
+        1.246199943125248,
+        0.9450000943616033,
+        0.9225000394508243
+      ],
+      "status": "pass"
+    },
+    {
+      "case": "topic_switch_suppression",
+      "failure_type": "topic_switch",
+      "path": "explicit",
+      "query": "明天的天气预报",
+      "recalled": [],
+      "other_path_ids": [],
+      "expected": [],
+      "hit": [],
+      "missing": [],
+      "injected": [],
+      "deleted_leaked": [],
+      "duplicate_hits": 0,
+      "recall_at_k": null,
+      "empty_as_expected": true,
+      "elapsed_ms": [
+        1.3369000516831875,
+        0.5037999944761395,
+        0.48179994337260723
+      ],
+      "passive_ms": [
+        0.6063999608159065,
+        0.5576000548899174,
+        0.7181999972090125
+      ],
+      "status": "pass"
+    },
+    {
+      "case": "subject_isolation",
+      "failure_type": "isolation",
+      "path": "explicit",
+      "query": "乌龙茶",
+      "recalled": [
+        "fact_subject_isolation_1"
+      ],
+      "other_path_ids": [],
+      "expected": [
+        "fact_subject_isolation_1"
+      ],
+      "hit": [
+        "fact_subject_isolation_1"
+      ],
+      "missing": [],
+      "injected": [],
+      "deleted_leaked": [],
+      "duplicate_hits": 0,
+      "recall_at_k": 1.0,
+      "empty_as_expected": null,
+      "elapsed_ms": [
+        1.5569999814033508,
+        0.4795999266207218,
+        0.4803999327123165
+      ],
+      "passive_ms": [
+        0.5754000740125775,
+        0.5239000311121345,
+        0.5164999747648835
+      ],
+      "status": "pass"
+    },
+    {
+      "case": "scene_isolation",
+      "failure_type": "isolation",
+      "path": "explicit",
+      "query": "先防后攻",
+      "recalled": [
+        "fact_scene_isolation_1"
+      ],
+      "other_path_ids": [
+        "fact_scene_isolation_1"
+      ],
+      "expected": [
+        "fact_scene_isolation_1"
+      ],
+      "hit": [
+        "fact_scene_isolation_1"
+      ],
+      "missing": [],
+      "injected": [],
+      "deleted_leaked": [],
+      "duplicate_hits": 0,
+      "recall_at_k": 1.0,
+      "empty_as_expected": null,
+      "elapsed_ms": [
+        1.3331000227481127,
+        0.49969996325671673,
+        0.7042000070214272
+      ],
+      "passive_ms": [
+        0.8557999972254038,
+        0.7759000873193145,
+        0.91559998691082
+      ],
+      "status": "pass"
+    },
+    {
+      "case": "deleted_content",
+      "failure_type": "deletion",
+      "path": "explicit",
+      "query": "咖啡",
+      "recalled": [
+        "fact_deleted_content_2"
+      ],
+      "other_path_ids": [],
+      "expected": [
+        "fact_deleted_content_2"
+      ],
+      "hit": [
+        "fact_deleted_content_2"
+      ],
+      "missing": [],
+      "injected": [],
+      "deleted_leaked": [],
+      "duplicate_hits": 0,
+      "recall_at_k": 1.0,
+      "empty_as_expected": null,
+      "elapsed_ms": [
+        1.69339997228235,
+        0.74970000423491,
+        1.419900101609528
+      ],
+      "passive_ms": [
+        1.2382999993860722,
+        1.1714000720530748,
+        2.0047000143676996
+      ],
+      "status": "pass"
+    }
+  ]
+}

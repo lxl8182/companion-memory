@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+.env
+demo-data/
+.scratch/
+# Runtime / verification output (screenshots, profiling logs).
+output/
+# Empty staging directory for local artifacts; never commit its contents.
+artifacts/
+# Local editor/UI backups kept for manual comparison; never published.
+*.bak
+*.bak-*
+

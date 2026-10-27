@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RIN C04 testbed</title>
+  <link rel="stylesheet" href="/testbed/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>RIN · C04 testbed</h1>
+      <p class="muted">临时测试前端：只通过同源 API 操作当前记忆根，不替代正式美术页面。</p>
+    </div>
+    <div class="actions">
+      <button id="refresh">刷新</button>
+      <button id="export">导出 JSON</button>
+    </div>
+  </header>
+
+  <section id="connection" class="panel">
+    <div class="status-row">
+      <span id="conn-dot" class="dot"></span>
+      <strong id="conn-text">正在连接…</strong>
+      <span id="readonly-badge" class="badge hidden">只读</span>
+      <span id="offline-badge" class="badge danger hidden">离线</span>
+    </div>
+    <div id="engine-summary" class="grid"></div>
+  </section>
+
+  <div id="notice" class="notice hidden" role="status"></div>
+
+  <main class="layout">
+    <section class="panel" id="overview-panel">
+      <h2>概览</h2>
+      <div id="overview" class="grid"></div>
+    </section>
+
+    <section class="panel" id="timeline-panel">
+      <h2>时间流与搜索</h2>
+      <form id="search-form" class="row">
+        <input id="search-input" placeholder="搜索原文、事实、反思或段落" autocomplete="off">
+        <button type="submit">搜索</button>
+        <button type="button" id="search-clear" class="ghost">清除</button>
+      </form>
+      <div id="search-results" class="muted">输入关键词搜索。</div>
+      <div id="timeline"></div>
+    </section>
+
+    <section class="panel" id="facts-panel">
+      <h2>事实与反思</h2>
+      <div class="two-col">
+        <div><h3>事实</h3><div id="facts"></div></div>
+        <div><h3>反思 / 成长</h3><div id="reflections"></div></div>
+      </div>
+    </section>
+
+    <section class="panel" id="persona-panel">
+      <h2>人格卡</h2>
+      <div id="persona-meta" class="muted"></div>
+      <div id="persona-sections"></div>
+      <div class="row">
+        <button id="restore-persona" class="danger">恢复初始卡</button>
+        <button id="sync-persona">同步投影</button>
+      </div>
+      <h3>历史</h3><div id="persona-history"></div>
+      <h3>当前投影</h3><pre id="persona-projection" class="code"></pre>
+    </section>
+
+    <section class="panel" id="publish-panel">
+      <h2>发布与消费者</h2>
+      <div class="row">
+        <button data-target="next_turn">发布 next_turn</button>
+        <button data-target="realtime">发布 realtime</button>
+        <button data-target="game">发布 game</button>
+      </div>
+      <div id="publish-current" class="muted"></div>
+      <div class="row">
+        <input id="rollback-version" placeholder="回滚到 version">
+        <button id="rollback">回滚</button>
+      </div>
+      <h3>消费者</h3><div id="consumers"></div>
+    </section>
+
+    <section class="panel" id="evolution-panel">
+      <h2>演化</h2>
+      <div class="row">
+        <label>模式
+          <select id="evolution-mode">
+            <option value="off">off（关闭）</option>
+            <option value="propose">propose（仅提案）</option>
+            <option value="auto">auto（自动接受并发布）</option>
+          </select>
+        </label>
+        <button id="apply-mode">应用模式</button>
+        <button id="evaluate-evolution">立即评估</button>
+        <button id="retry-evolution">重试 pending</button>
+      </div>
+      <div id="evolution-status" class="muted"></div>
+      <h3>提案</h3>
+      <div id="proposals"></div>
+      <details>
+        <summary>手动发起提案</summary>
+        <div class="row">
+          <input id="proposal-refs" placeholder="source_refs，逗号分隔">
+          <input id="proposal-sections" placeholder="focus_sections，逗号分隔">
+          <button id="propose">发起提案</button>
+        </div>
+      </details>
+    </section>
+
+    <section class="panel" id="cleanup-panel">
+      <h2>清理</h2>
+      <details open>
+        <summary>更正</summary>
+        <div class="row">
+          <input id="correct-old" placeholder="旧文本（可空）">
+          <input id="correct-new" placeholder="新文本">
+          <button id="correct">提交更正</button>
+        </div>
+      </details>
+      <details open>
+        <summary>删除</summary>
+        <div class="row">
+          <select id="delete-type">
+            <option value="">自动/按文本</option>
+            <option value="fact">fact</option>
+            <option value="reflection">reflection</option>
+            <option value="persona">persona</option>
+            <option value="episode">episode</option>
+          </select>
+          <input id="delete-id" placeholder="id（可空）">
+          <input id="delete-source" placeholder="source_key（可空）">
+          <input id="delete-text" placeholder="或按文本匹配">
+          <button id="delete" class="danger">删除</button>
+        </div>
+      </details>
+      <h3>可删除条目</h3><div id="deletable"></div>
+      <h3>删除记录</h3><div id="deletions"></div>
+      <h3>更正记录</h3><div id="corrections"></div>
+    </section>
+
+    <section class="panel" id="raw-panel">
+      <h2>原始 JSON</h2>
+      <details><summary>展开 /api/snapshot 与 /api/engine/status</summary>
+        <pre id="raw-json" class="code"></pre>
+      </details>
+    </section>
+  </main>
+
+  <script src="/testbed/app.js"></script>
+</body>
+</html>
