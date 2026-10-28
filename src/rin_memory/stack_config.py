@@ -21,6 +21,60 @@ class StackConfigError(ValueError):
     pass
 
 
+#: 上下文分段(RO02-CTX)的默认参数。
+#:
+#: 与 DSH 记忆插件的 `segment` 配置一一对应。两处都写默认值是有意的:插件是
+#: 唯一真正按这些数字判断「该不该换段」的地方,而服务端这份用于管理台展示和
+#: 配置校验 —— 任何一侧缺失都不该让聊天停下来。
+SEGMENT_DEFAULTS = {
+    "budget_tokens": 128000,
+    "hard_tokens": 160000,
+    "carry_turns": 30,
+    "carry_tokens": 8000,
+    "idle_hours": 24,
+    "min_turns": 6,
+    "max_age_days": 14,
+}
+
+
+def _segment_table(raw: dict, path: Path) -> dict[str, int]:
+    """读取并校验 `[segment]` 表。
+
+    这些数字决定「一次请求能塞多少」。写错一个不会让服务起不来,但会让上限失效,
+    所以宁可在这里明确报错,也不静默回落到默认值 —— 用户改了配置却没生效,
+    比配置被拒绝更难查。
+    """
+    table = _table(raw, "segment")
+    known = set(SEGMENT_DEFAULTS)
+    unknown = sorted(set(table) - known)
+    if unknown:
+        raise StackConfigError(
+            f"segment: unknown key(s) {', '.join(unknown)}; "
+            f"expected {', '.join(sorted(known))}",
+        )
+    values = dict(SEGMENT_DEFAULTS)
+    for key, default in SEGMENT_DEFAULTS.items():
+        if key not in table:
+            continue
+        value = table[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise StackConfigError(f"segment.{key}: expected a non-negative integer")
+        if key in ("budget_tokens", "hard_tokens", "carry_tokens") and value < 1:
+            raise StackConfigError(f"segment.{key}: must be positive")
+        if key == "idle_hours" and value < 1:
+            raise StackConfigError("segment.idle_hours: must be at least 1")
+        if key == "max_age_days" and value < 1:
+            raise StackConfigError("segment.max_age_days: must be at least 1")
+        values[key] = value
+    # 两条跨字段约束在语义上是错的,不是「值不好看」:硬上限不高于软上限时软上限
+    # 永远先到,硬上限形同虚设;带入上限不小于软上限时新段首次请求自带超限。
+    if values["hard_tokens"] <= values["budget_tokens"]:
+        raise StackConfigError("segment.hard_tokens: must be greater than segment.budget_tokens")
+    if values["carry_tokens"] >= values["budget_tokens"]:
+        raise StackConfigError("segment.carry_tokens: must be less than segment.budget_tokens")
+    return values
+
+
 @dataclass(frozen=True)
 class StackConfig:
     path: Path
@@ -32,6 +86,7 @@ class StackConfig:
     request_capacity: int
     startup_timeout_s: float
     host: dict[str, Any]
+    segment: dict[str, int]
 
     @property
     def url(self) -> str:
@@ -240,6 +295,7 @@ def load_config(path: Path | str) -> StackConfig:
         path, roots, settings, python, display.strip(), subject.strip(),
         _number(cfg, "request_capacity", 16, integer=True),
         _number(cfg, "startup_timeout_s", 20), host_config,
+        _segment_table(raw, path),
     )
 
 
@@ -346,6 +402,24 @@ enabled_plugins = []
 [evolution]
 # The service persists off/propose/auto; change it in the management console.
 initial_mode = 'off'
+
+# 上下文分段(RO02-CTX)。长聊到预算就把旧会话归档、开一段新会话，模型每次
+# 只读当前段 + 本轮需要的旧记忆；原始聊天始终完整留在旧会话里，不做摘要改写。
+[segment]
+# 软上限：本段累计输入达到它，就在本轮结束、气泡全部投递完成后换段。
+budget_tokens = 128000
+# 硬上限：防一条超长文本或大图冲破预算；触发时不看最少轮数。
+hard_tokens = 160000
+# 新段带入的最近完整对话轮数，与 carry_tokens 取先到；永不拆半轮。
+carry_turns = 30
+# 带入正文的 token 上限。
+carry_tokens = 8000
+# 没有真实用户互动满这么多小时就换段；主动消息与后台任务不重置计时。
+idle_hours = 24
+# 少于此轮数不换段，防止刚开段就被换掉。
+min_turns = 6
+# 段龄上限（天），仅在空闲时生效，不会打断进行中的对话。
+max_age_days = 14
 '''
         try:
             with path.open("x", encoding="utf-8", newline="\n") as handle:
