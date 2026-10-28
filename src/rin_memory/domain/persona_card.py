@@ -29,6 +29,7 @@ keeps auto-evolution closed.
 from __future__ import annotations
 
 import copy
+import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
@@ -64,6 +65,8 @@ REASON_NO_INITIAL_CARD = "no_initial_card"
 REASON_EMPTY_SECTIONS = "empty_sections"
 REASON_NO_CHANGE = "no_change"
 REASON_ALREADY_IMPORTED = "already_imported"
+REASON_INVALID_SECTION_ID = "invalid_section_id"
+REASON_SECTION_ID_TOO_LONG = "section_id_too_long"
 
 MAX_SECTION_ID = 120
 MAX_SECTION_TEXT = 4000
@@ -74,9 +77,62 @@ MAX_OPERATIONS = 16
 
 _OPERATIONS = frozenset({"add", "replace", "merge", "delete"})
 
+#: A section id is a stable identifier, never a sentence: letters (any script,
+#: CJK included), digits, underscore, hyphen and dot. Whitespace, path
+#: separators, quotes and punctuation are refused with a stable reason instead
+#: of being silently truncated, because a shortened id would address a
+#: *different* section on the next revision. Host-imported ids such as
+#: `host_persona_<key>` keep working: \w is Unicode-aware in Python.
+_SECTION_ID_RE = re.compile(r"^[\w.\-]+$")
+
+#: kind=examples is a first-class section kind, not a special case of prose: it
+#: renders into the fixed persona text marked as a sample, and it is never a
+#: source of user facts, shared experiences or growth evidence (design §8.2).
+EXAMPLES_KIND = "examples"
+
+#: Written above an examples section wherever the card renders it. Plain prose on
+#: purpose: it is part of the system prompt the model reads, so a bracketed
+#: machine tag would read as another instruction layer.
+EXAMPLES_BANNER = "以下是表达示范，情境和台词只是示范，不是用户事实或共同经历。"
+
+#: Creation-time default *field templates*. They carry no storage of their own:
+#: a caller that uses one simply sends these fields in an ordinary `add`
+#: operation, so the preset goes through the same revision, publish, rollback
+#: and freeze path as any other section. A preset is a convenience, never a
+#: whitelist — any other section_id/kind is equally valid.
+SECTION_PRESETS: tuple[dict[str, Any], ...] = (
+    {
+        "section_id": "about_owner",
+        "kind": "profile",
+        "label": "关于主人",
+        "editable_by": {"user": True, "evolution": True},
+        "frozen": False,
+    },
+    {
+        "section_id": "dialogue_examples",
+        "kind": EXAMPLES_KIND,
+        "label": "对话示例",
+        "editable_by": {"user": True, "evolution": False},
+        "frozen": True,
+    },
+)
+
 
 class _Rejected(Exception):
     """Internal rejection signal carrying a stable reason code."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
+class InvalidSectionId(ValueError):
+    """A section id that cannot be a stable key; `reason` is the stable code.
+
+    Public because both the card service and the evolution validator refuse the
+    same ids for the same reasons: a shared rule with one message beats two
+    copies that can drift apart.
+    """
 
     def __init__(self, reason: str) -> None:
         self.reason = reason
@@ -334,10 +390,17 @@ class PersonaCardService:
         return self._snapshot(character, card)
 
     def render_projection(self, character: str) -> dict[str, str]:
-        """`{section_id: text}` projection for the host characters.json."""
+        """`{section_id: text}` projection for the host characters.json.
+
+        An `examples` section is rendered with a plain-prose lead-in marking it
+        as expression samples. The mark belongs in the fixed persona text: it is
+        read by the same model that reads the samples, and without it the samples
+        would look like recalled user facts. The section's own text is otherwise
+        untouched, so the projection still maps one section id to one string.
+        """
         snapshot = self.get(character)
         return {
-            section.section_id: section.text.strip()
+            section.section_id: _render_section_text(section)
             for section in snapshot.sections
             if section.text.strip()
         }
@@ -893,9 +956,17 @@ class PersonaCardService:
             if op_type not in _OPERATIONS:
                 raise _Rejected(REASON_INVALID_OPERATION)
             op: dict[str, Any] = {"op": op_type}
-            section_id = _bounded(raw.get("section_id"), MAX_SECTION_ID)
+            # Length and emptiness are refused here; the character rule is
+            # decided in _apply_operation, where the card is known. A legacy or
+            # host-imported id must stay editable even when it would not be
+            # accepted as a new one today, but an over-long id is never truncated
+            # into a *different* section: it is a naming mistake at the source.
+            raw_id = raw.get("section_id")
+            section_id = raw_id.strip() if isinstance(raw_id, str) else ""
             if not section_id:
                 raise _Rejected("invalid_request")
+            if len(section_id) > MAX_SECTION_ID:
+                raise _Rejected(REASON_SECTION_ID_TOO_LONG)
             op["section_id"] = section_id
             if op_type != "delete":
                 text = str(raw.get("text") or "")
@@ -947,17 +1018,32 @@ class PersonaCardService:
         existing = by_id.get(section_id)
         if op_type == "add":
             if existing is not None:
+                # A second card with the same id would silently overwrite the
+                # first: the caller gets `duplicate_section` and edits instead.
                 raise _Rejected(REASON_DUPLICATE_SECTION)
+            # Only *new* ids are held to the identifier rule. An id that already
+            # exists (imported from the host, or written before this rule) stays
+            # editable through replace/merge/delete below: refusing to edit
+            # existing text would strand it.
+            _checked_section_id(section_id)
+            kind = _bounded(op.get("kind"), MAX_KIND_CHARS) or "identity"
             editable = _normalize_editable(op.get("editable_by"))
             if auto and not editable.get("evolution"):
                 raise _Rejected(REASON_NOT_EDITABLE)
+            frozen = bool(op.get("frozen"))
+            if kind == EXAMPLES_KIND and "frozen" not in op:
+                # A dialogue sample is hand-picked expression: it starts frozen
+                # and closed to evolution so an automatic revision cannot
+                # rewrite the very style the user chose (design §4.2). Both
+                # defaults are overridable by an explicit field in the same op.
+                frozen = True
             section = {
                 "section_id": section_id,
-                "kind": _bounded(op.get("kind"), MAX_KIND_CHARS) or "identity",
+                "kind": kind,
                 "text": str(op.get("text") or ""),
                 "scope": _normalize_scope(op.get("scope")),
                 "editable_by": editable,
-                "frozen": bool(op.get("frozen")),
+                "frozen": frozen,
                 "origin": req["origin"],
                 "source_refs": refs[:MAX_SOURCE_REFS],
                 "revision": 0,
@@ -980,6 +1066,11 @@ class PersonaCardService:
             by_id.pop(section_id, None)
             return section_id
         old_text = str(existing.get("text") or "")
+        # Permission/scope changes are ordinary revisions of an existing
+        # section: freezing a section by hand, opening it to evolution, or
+        # binding it to another subject must not require inventing a text change
+        # (that would write a revision whose only real purpose was a flag).
+        metadata_changed = self._apply_metadata(existing, op)
         if op_type == "replace":
             new_text = str(op.get("text") or "")
         else:  # merge
@@ -992,7 +1083,10 @@ class PersonaCardService:
             if name and not parse_name_line(new_text):
                 new_text = with_name_line(new_text, name)
         if new_text == old_text:
-            return None
+            # Text unchanged: the revision still counts when it changed what the
+            # card *permits* (editable_by/scope/frozen/kind); otherwise it is a
+            # no-op and the caller gets `no_change`.
+            return section_id if metadata_changed else None
         history = list(existing.get("history") or [])
         history.append({
             "revision": _as_int(existing.get("revision"), 0),
@@ -1004,21 +1098,44 @@ class PersonaCardService:
         existing["history"] = history[-self._store.history_limit:]
         existing["text"] = new_text
         existing["origin"] = req["origin"]
-        for key in ("kind",):
-            if key in op:
-                existing["kind"] = _bounded(op.get(key), MAX_KIND_CHARS) or existing.get("kind")
-        if "scope" in op:
-            existing["scope"] = _normalize_scope(op.get("scope"))
-        if "editable_by" in op:
-            existing["editable_by"] = _normalize_editable(op.get("editable_by"))
-        if "frozen" in op:
-            existing["frozen"] = bool(op.get("frozen"))
         merged_refs = list(existing.get("source_refs") or [])
         for ref in refs:
             if ref not in merged_refs and len(merged_refs) < MAX_SOURCE_REFS:
                 merged_refs.append(ref)
         existing["source_refs"] = merged_refs
         return section_id
+
+    @staticmethod
+    def _apply_metadata(section: dict[str, Any], op: Mapping[str, Any]) -> bool:
+        """Apply kind/scope/editable_by/frozen; true when anything changed.
+
+        These four are the section's *permissions and reach*, not its prose. They
+        are applied even when the caller sends no text, so "freeze this section",
+        "let evolution touch it" and "bind it to this subject" are ordinary
+        revisions with an audit record instead of side effects of a text edit.
+        """
+        changed = False
+        if "kind" in op:
+            kind = _bounded(op.get("kind"), MAX_KIND_CHARS) or section.get("kind")
+            if kind != section.get("kind"):
+                section["kind"] = kind
+                changed = True
+        if "scope" in op:
+            scope = _normalize_scope(op.get("scope"))
+            if scope != dict(section.get("scope") or {}):
+                section["scope"] = scope
+                changed = True
+        if "editable_by" in op:
+            editable = _normalize_editable(op.get("editable_by"))
+            if editable != dict(section.get("editable_by") or {}):
+                section["editable_by"] = editable
+                changed = True
+        if "frozen" in op:
+            frozen = bool(op.get("frozen"))
+            if frozen != bool(section.get("frozen")):
+                section["frozen"] = frozen
+                changed = True
+        return changed
 
     # -- replay ---------------------------------------------------------
 
@@ -1303,6 +1420,41 @@ def _bounded(value: Any, limit: int) -> str:
     return value.strip()[:limit]
 
 
+def _render_section_text(section: CardSection) -> str:
+    """Section text as it enters the fixed persona prompt."""
+    text = section.text.strip()
+    if section.kind == EXAMPLES_KIND and text:
+        return EXAMPLES_BANNER + "\n" + text
+    return text
+
+
+def validate_section_id(value: Any) -> str:
+    """Return a usable section_id or raise `InvalidSectionId` with a reason.
+
+    Three failures get three reasons, because a caller has to act differently on
+    each: an over-long id is shortened at the *source* (the client picked a bad
+    label), an illegal-character id must be renamed (it would not survive as a
+    key), and an empty id means the operation itself is malformed. Nothing is
+    silently truncated: a truncated id addresses a different section.
+    """
+    section_id = value.strip() if isinstance(value, str) else ""
+    if not section_id:
+        raise InvalidSectionId(REASON_INVALID_OPERATION)
+    if len(section_id) > MAX_SECTION_ID:
+        raise InvalidSectionId(REASON_SECTION_ID_TOO_LONG)
+    if not _SECTION_ID_RE.match(section_id):
+        raise InvalidSectionId(REASON_INVALID_SECTION_ID)
+    return section_id
+
+
+def _checked_section_id(value: Any) -> str:
+    """`validate_section_id` for the card service's internal rejection path."""
+    try:
+        return validate_section_id(value)
+    except InvalidSectionId as exc:
+        raise _Rejected(exc.reason) from exc
+
+
 def _normalize_editable(value: Any) -> dict[str, bool]:
     editable: dict[str, bool] = {"user": True, "evolution": False}
     if isinstance(value, Mapping):
@@ -1370,6 +1522,11 @@ def _id_set(values: Any) -> set[str]:
 
 __all__ = [
     "AUTO_ORIGINS",
+    "EXAMPLES_BANNER",
+    "EXAMPLES_KIND",
+    "InvalidSectionId",
+    "SECTION_PRESETS",
+    "validate_section_id",
     "CardRevision",
     "CardSection",
     "CardSnapshot",

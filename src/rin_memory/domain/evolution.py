@@ -43,7 +43,13 @@ from .growth_evidence import (
     eligibility_of_row,
     evidence_dto,
 )
-from .persona_card import MAX_SECTION_TEXT, CardSection, PersonaCardService
+from .persona_card import (
+    MAX_SECTION_TEXT,
+    CardSection,
+    InvalidSectionId,
+    PersonaCardService,
+    validate_section_id,
+)
 from .reflection import MEMORY_KINDS, PROMOTION_RULES
 
 EVT_PERSONA_EVOLUTION_PROPOSED = "core.persona_evolution_proposed"
@@ -843,6 +849,19 @@ class EvolutionService:
                 return [], REASON_VALIDATION_FAILED, _validation(
                     checks, REASON_VALIDATION_FAILED,
                 )
+            if op_type == "add":
+                # Only a *new* section id must be a stable key. Refusing it here
+                # names the real problem ("this id cannot be a key") while the
+                # proposal is still being validated, rather than surfacing a bare
+                # failure when somebody later accepts it. An id that already
+                # exists is edited below under the card's own rules.
+                try:
+                    section_id = validate_section_id(section_id)
+                except InvalidSectionId as exc:
+                    checks.append(_check("section_id", False, exc.reason))
+                    return [], REASON_VALIDATION_FAILED, _validation(
+                        checks, REASON_VALIDATION_FAILED,
+                    )
             if section_id in seen_sections:
                 checks.append(_check("duplicate_section", False, REASON_VALIDATION_FAILED))
                 return [], REASON_VALIDATION_FAILED, _validation(
