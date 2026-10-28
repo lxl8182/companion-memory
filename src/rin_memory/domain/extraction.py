@@ -698,6 +698,17 @@ class ExtractionService:
             self._settle_op(character, op_ids, outcome)
             return outcome
         raw_candidates, raw_updates, raw_signals = parsed
+        # An answer without attributable sources is a failed extraction, not
+        # an empty result. Keep the entire batch queued before writing any
+        # facts or state so a later retry can repair the model's citations.
+        if any(not _valid_batch_sources(row, utterances)
+               for row in (*raw_candidates, *raw_updates)):
+            outcome = ExtractionOutcome(
+                "failed", reason="unresolved_sources", batch_id=batch_id,
+                source_keys=tuple(all_keys),
+            )
+            self._settle_op(character, op_ids, outcome)
+            return outcome
         candidates = [
             candidate for candidate in (
                 _bind_candidate(candidate, utterances) for candidate in raw_candidates
@@ -742,18 +753,13 @@ class ExtractionService:
     ) -> int:
         """Persist the interest signals of one extraction answer (RO03).
 
-        Deliberately quiet: the interest layer is additive evidence for the
-        `about_owner` section, so a failure here must not fail an extraction
-        that already wrote good facts, and must not leave the window pending.
-        A signal whose citations do not resolve is discarded inside the service
-        rather than stored without a source.
+        A write failure keeps the source batch pending; previously committed
+        facts are deduplicated on retry. An invalid signal citation is rejected
+        by the interest service instead of being stored without a source.
         """
         if self._interests is None or not signals:
             return 0
-        try:
-            return int(self._interests.record(character, signals, utterances) or 0)
-        except Exception:  # noqa: BLE001 - additive layer, never fatal
-            return 0
+        return int(self._interests.record(character, signals, utterances) or 0)
 
     def _batch_reference(
         self, character: str, utterances: Sequence[Mapping[str, Any]],
@@ -1270,6 +1276,21 @@ def _same_when(
     return (_key(left[0]), _key(left[1])) == (_key(right[0]), _key(right[1]))
 
 
+def _valid_batch_sources(
+    row: Mapping[str, Any], utterances: Sequence[Mapping[str, Any]],
+) -> bool:
+    refs = row.get("sources") or row.get("utterances")
+    if not isinstance(refs, list) or not refs:
+        return False
+    users = {item["index"] for item in utterances if item.get("has_user")}
+    return all(
+        not isinstance(ref, bool)
+        and (isinstance(ref, int) or isinstance(ref, str) and ref.isdecimal())
+        and int(ref) in users
+        for ref in refs
+    )
+
+
 def _bind_candidate(
     candidate: Mapping[str, Any], utterances: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any] | None:
@@ -1321,6 +1342,8 @@ def _bind_candidate(
                 return None
         anchor = cited[0]["occurred_at"]
     row = dict(candidate)
+    row["subject"] = cited[-1]["metadata"].get("subject", "private")
+    row["applies_to"] = dict(cited[-1]["metadata"].get("applies_to") or {})
     row["source_event_keys"] = keys
     row["context_refs"] = []
     # Relative time is resolved against the earliest cited utterance: when the

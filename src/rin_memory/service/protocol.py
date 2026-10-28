@@ -155,6 +155,8 @@ class ServiceProtocol:
             "recent_turns": self.recent(scope), "context_receipt_id": receipt_id,
             "expires_in_s": 300,
             "basis": basis,
+            "mention_preferences": [row["term"] for row in self.core.directives.active(self.character)]
+            if scope["subject"] == "private" else [],
             # M5 additive layers; the keys above keep their exact shape.
             **self.context_layers(recall),
         }
@@ -284,6 +286,15 @@ class ServiceProtocol:
         served = context.get("context") or {}
         served_ids = [str(item) for item in served.get("memory_ids") or () if item]
         served_sources = [str(item) for item in served.get("source_ids") or () if item]
+        summary = context.get("working_summary") or {}
+        for section in (summary.get("sections") or {}).values():
+            served_sources.extend(str(key) for key in section.get("refs") or () if key)
+            for item in section.get("items") or ():
+                if item.get("id"):
+                    served_ids.append(str(item["id"]))
+                served_sources.extend(str(key) for key in item.get("source_keys") or () if key)
+        served_ids = list(dict.fromkeys(served_ids))
+        served_sources = list(dict.fromkeys(served_sources))
         wanted = declared.get("memory_ids")
         if isinstance(wanted, list) and wanted:
             claimed_ids = {str(item) for item in wanted}
@@ -315,6 +326,23 @@ class ServiceProtocol:
             "deletion_version": int((context.get("basis") or {}).get("deletion_version") or 0),
         })
         return True
+
+    def consume(self, body: Mapping, *, identity: Mapping | None = None) -> dict:
+        """Adopt an output generation's context without reserving a chat turn."""
+        from .server import ApiError
+        request_id = str(body.get("request_id") or "").strip()
+        if not request_id:
+            raise ApiError("invalid_argument", "request_id is required")
+        context = self.validate(str(body.get("context_receipt_id") or ""), self.scope(body))
+        recorded = self._record_consumer_ref(body, self.scope(body), context,
+                                             request_id, identity=identity)
+        adoption = self.core.persona_publish.consume(self.character, "dsh_qq_contact",
+                                                     expected_version=context["persona_version"])
+        return {"status": "consumed", "request_id": request_id,
+                "context_receipt_id": context["context_receipt_id"],
+                "consumer_refs": "recorded" if recorded else "ignored",
+                "persona_version": context["persona_version"],
+                "adoption_status": adoption.status}
 
     def validate(self, receipt_id: str, scope: Mapping, *, request_id: str = "") -> dict:
         from .server import ApiError

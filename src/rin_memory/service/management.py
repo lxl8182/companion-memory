@@ -1058,6 +1058,24 @@ class ManagementApi:
 
     def protocol_post(self, path: str, payload: Mapping, *, identity: Mapping | None = None):
         core = self.service.core
+        if path == "/v1/segment/note":
+            from ..domain.segment_note import build_segment_note
+            from .protocol import scene_object
+            scope = self.service.protocol.scope(payload)
+            basis = self.service.protocol.basis()
+            summary = core.working_summary_service.build(
+                self.console.character, subject=scope["subject"],
+                scene=scene_object(scope["scene"]),
+            )
+            threads = [dict(row, id=row.get("thread_id"),
+                            source_key=next(iter(row.get("source_keys") or ()), ""))
+                       for row in summary.section("open_threads").items
+                       if not row.get("mention_restricted")]
+            note = build_segment_note(threads, switched_at=payload.get("switched_at"),
+                                      last_user_at=payload.get("last_user_at"))
+            if basis != self.service.protocol.basis():
+                raise ApiError("context_stale", 409, "memory changed while the note was being built")
+            return note.as_dict() if note else {"text": "", "refs": []}
         if path == "/v1/outputs":
             return self.output_record(payload, identity or {})
         if path == "/v1/outputs/deliver":
@@ -1066,6 +1084,9 @@ class ManagementApi:
             return self.output_invalidate(payload, identity or {})
         if path == "/v1/context/reserve":
             return self.service.protocol.reserve(payload)
+        if path == "/v1/context/consume":
+            self.require_memory_outputs(identity or {})
+            return self.service.protocol.consume(payload, identity=identity)
         if path == "/v1/context/validate":
             context = self.service.protocol.validate(str(payload.get("context_receipt_id") or ""), self.service.protocol.scope(payload))
             return {"status": "valid", "context_receipt_id": context["context_receipt_id"], "persona_version": context["persona_version"]}

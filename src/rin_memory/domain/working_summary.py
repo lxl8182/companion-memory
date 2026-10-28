@@ -583,6 +583,7 @@ class WorkingSummaryService:
                 "next_step": _clean(row.get("next_step")),
                 "why": _clean(row.get("why")),
                 "age_days": _age_days(row.get("updated_at"), self._now()),
+                "updated_at": row.get("updated_at") or row.get("created_at"),
                 "followup_at": row.get("followup_at") or row.get("next_at"),
                 "agreed_followup": bool(row.get("agreed_followup")),
                 "expires_at": row.get("expires_at"),

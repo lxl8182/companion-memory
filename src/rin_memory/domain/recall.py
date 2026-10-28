@@ -1976,11 +1976,7 @@ class RecallService:
     def _interest_snapshot(
         self, character: Any, *, subject: Any, scene: Any,
     ) -> dict[str, Any]:
-        """Interest evidence for this subject/scene (RO03), never raising.
-
-        The empty shape is used whenever the layer is unwired or the store
-        cannot be read: a caller that reports this always gets the same keys.
-        """
+        """Interest evidence for this subject/scene; unwired layers are empty."""
         empty = {
             "version": 0, "items": [], "stable_interests": [],
             "recent_interests": [], "avoid_topics": [],
@@ -1991,12 +1987,9 @@ class RecallService:
         name = str(character or "").strip()
         if not name:
             return empty
-        try:
-            return dict(service.snapshot(
-                name, subject=str(subject or "private"), scene=scene,
-            ))
-        except Exception:  # noqa: BLE001 - evidence layer is additive
-            return empty
+        return dict(service.snapshot(
+            name, subject=str(subject or "private"), scene=scene,
+        ))
 
     def _resolve_followup(
         self,

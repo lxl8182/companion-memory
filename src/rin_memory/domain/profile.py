@@ -465,10 +465,7 @@ class InterestService:
         can tell two reads of the same generation turn apart from two reads
         across a write.
         """
-        try:
-            document = self.store.load(character)
-        except Exception:  # noqa: BLE001 - a broken store must not fail a turn
-            return _empty_snapshot()
+        document = self.store.load(character)
         items = [
             dict(row) for row in (document.get("items") or {}).values()
             if self._visible(character, row, subject, scene, now)

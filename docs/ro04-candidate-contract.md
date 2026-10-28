@@ -1,13 +1,8 @@
-# RO04-B 接口准备:四类候选入口合同
+# RO04-B 四类候选、绑定恢复与唯一投递合同
 
-更新:2026-10-28。本文件是 **接口合同**,不是实现说明。
+更新:2026-10-29。T8 的绑定恢复和通用投递接口已在本机完成；T7 的插件候选、联系计划和退出旧消费正在联合验收。计划发行核心 `0.1.0.dev11`、插件 `0.3.0`、bridge `1.0.6-neko.7`；本批尚未同步服务器。
 
-对应任务:RO04-B 接口准备(T8)。真正的切换由 T7 完成,T7 之后由 Lead 联合验收。
-本文件记录的是本卡交付的三件接口事实:绑定恢复、通用投递、四类候选如何进入新链路。
-
-> **本卡不关闭旧链路。** 旧 `/v1/proactive/*`(poll / use / check / complete / release / observe)
-> 继续按现有合同服务所有消费者;插件 `dsh-rin-memory/proactive.js` 一字未改,
-> 其中 `:91` 的 `/v1/proactive/poll` 仍是当前的主动消费入口。QQ 退出该消费点由 T7 在插件内完成。
+QQ 由插件调度，使用通用 context、outputs 和回执。原 `/v1/proactive/*` 接口继续服务其他消费者；QQ 不再消费其候选。旧已生成输出按稳定 `output_id` 接续或明确取消。
 
 ---
 
@@ -120,7 +115,7 @@ interface QqDeliveryOutcome {
 
 ### 3.2 与核心 /v1/outputs 的关系
 
-分段边界由 **核心** 决定,不在这里产生第二套切法:
+插件先通过 bridge 的 `planOutput` 确定规范正文与 `part_sizes`，核心校验并固定该分段；投递时不再切分:
 
 ```
 ① POST /v1/outputs            { text, part_sizes, kind, cause, output_id?, request_id? }
@@ -167,106 +162,44 @@ bridge 只持有传输事实:谁合法、哪一段到了、还差哪一段。
 
 ---
 
-## 4. 四类候选入口合同
+## 4. 四类候选与联系计划
 
-四类候选统一进**一个**池、走**一条**投递链路。采集器只产候选,不独立调发送器、不另起循环。
+四类机会进入插件的同一个持久候选池，并共用一次角色决策和一条投递链路。核心继续保存人格、原话、事实、兴趣依据、输出和回执；插件不写核心的旧候选文件。
 
-### 4.1 候选字段(T7 侧候选池,与核心现有 `proactive_candidates.json` 对齐)
-
-核心已有字段(可直接重用,不要新建平行结构):
-
-```text
-candidate_id / cause / intent / maturity_source / text / why
-subject / scene / status / due_at / agreed_at / honor_agreed_time
-source_keys[] / fact_ids[] / reflection_ids[]
-thread_id / thread_revision / episode_id / output_id
-eligibility / merged_into / absorbed_into
-cancelled_reason / stale_reason / rewrite_history[]
-created_at / updated_at / sent_at
-lease_id / lease_owner / lease_session / lease_request / lease_until
-```
-
-已有枚举:
-
-```text
-cause            : thread_due | agreement | task_result | interest_news | shared_finding
-intent           : continue_topic | interest_share | new_idea | creation
-maturity_source  : explicit_agreement | task_result | autonomous_inference
-status           : pending | postponed | merged | cancelled | sent | stale | invalidated
-```
-
-T7 还需另存(不写进核心候选行,属于调度侧):`session_binding`、`material_refs[]`、
-`memory_refs[]`、`profile_version`、`persona_version`、`context_basis`、`expires_at`。
-
-### 4.2 四类候选的入口
-
-| 类别 | 触发事实 | `cause` | `intent` | `maturity_source` | 必填来源字段 | 额外要求 |
-|---|---|---|---|---|---|---|
-| **明确约定** | 主人明确说过"明天面试完告诉我"、约定提醒/问候 | `agreement` | `continue_topic` | `explicit_agreement` | `agreed_at`、`source_keys`(原话)、`honor_agreed_time=true` | 时间锚点来自原话,不用处理时间;主人提前聊过结果 → `cancelled` + `cancelled_reason` |
-| **未完事项** | 待关心事项到达跟进时间 | `thread_due` | `continue_topic` | `autonomous_inference` | `thread_id`、`thread_revision`、`due_at`、`episode_id`(有则填) | 需过 M4 资格门(`eligibility`);同一 thread 只保留一个 live 候选 |
-| **任务结果** | 后台任务产生真实完成/失败结果 | `task_result` | `new_idea` 或 `creation` | `task_result` | `source_keys`(任务标识)、`output_id`(有正文时) | 只报真实结果,不虚构;失败也要报真实失败原因 |
-| **新素材** | 读到未分享、内容足够且仍有效的材料 | `interest_news` | `interest_share` | `autonomous_inference` | `material_refs[]`、`source_keys`(规范 URL)、`eligibility` | 只读到标题时不得生成"看完视频"这类表述;不得写成"用户喜欢 X" |
-
-补充:`shared_finding`(共同经历产生发现)按"新素材"同样处理,只是素材来自对话而非外部来源。
-
-### 4.3 素材记录字段(T7 侧缓存)
-
-```text
-material_id            稳定标识(内容指纹的短哈希)
-canonical_url          规范 URL
-source                 来源(站点/服务)
-title / summary        标题、简介
-published_at           发布时间
-fetched_at             获取时间
-read_scope             title | summary | body | transcript   ← 决定允许说什么
-topics[]               主题标签
-content_fingerprint    内容指纹(去重与失效用)
-```
-
-`read_scope` 是硬约束:只到 `title` 就只能说"看到一条讲 X 的",不能说内容细节,
-更不能说"看完了"。素材失效(`expires_at` 过、来源删除、指纹不再匹配)时,
-对应候选进 `stale` 或 `cancelled`,不静默改成别的话题。
-
-### 4.4 从候选到一次投递
-
-```text
-采集器 / 事项推进 / 任务完成
-  → 写入候选池(带 cause、maturity_source 与来源引用)
-  → 选一个候选并领取租约(candidate_id + lease_id)
-  → 一次模型请求:是否说 + 选题与正文 + 下一次安排
-      ├─ [PASS]                 → release(reason: model_pass),可同时安排下次
-      ├─ 有正文                 → 见下
-      └─ 解析不了时间            → 报调度状态,不静默猜时间
-  → POST /v1/outputs            取 output_id 与 pending_parts
-  → bridge.deliverByIndex       按索引分段投递,拿逐段回执
-  → POST /v1/outputs/deliver    只回报已送达片段
-  → 计划标记 consumed(已消费必须持久化,重启不复活)
-```
-
-选中依据要能落盘:模型选中了哪个 `candidate_id` / `material_id` 必须被保存
-(用于标记已用素材、去重、来源校验),不能只拿回正文。选择元数据不发 QQ。
-
-### 4.5 明确的非目标
-
-- 不做第二套候选生成器、第二套发送器、第二套循环;
-- 不在 bridge 里判断候选该不该发(见 §3.3);
-- 不把模型选择的元数据发到 QQ;
-- 不在本卡关闭旧 `/v1/proactive/*`。
-
----
-
-## 5. 本卡与后续的边界
-
-| 项 | 本卡(T8) | 后续 |
+| 入口 | 插件候选 | 来源依据 |
 |---|---|---|
-| 绑定恢复接口 | ✅ 已交付(bridge + 模拟适配器验收) | 插件侧持久化与调用(T7) |
-| 通用投递接口 | ✅ 已交付(按索引、部分失败可续) | 候选来源接入(T7) |
-| 候选入口合同 | ✅ 本文 | 实现(T7) |
-| 旧 `/v1/proactive/*` 消费 | **不动** | T7 在 `proactive.js` 内退出 |
-| 排期 / 一次性唤醒 | 不做 | T7 |
-| 联合验收 | 不做 | Lead,在 T7 之后 |
+| 明确约定 | `followup`，附明确约定与时间 | 主人原话、事项引用、原始时间 |
+| 未完事项 | `followup` | 当前有效事项、来源引用与下一步 |
+| 任务结果 | `task_result` | 真实任务终态或咒语执行结果 |
+| 新素材 | `interest_share` 或 `discovery` | 实际获取的素材、阅读范围与获取时间 |
 
----
+候选保存 `candidate_id/character_id/subject/session_binding/kind/topic/reason/material_refs/memory_refs/profile_version/persona_version/context_basis/created_at/due_at/expires_at/status/output_id`。`profile_version` 记录兴趣依据版本；本批不设独立画像服务。相同主体的稳定认识与相处偏好放在已有的 `about_owner` 人格段落。
+
+素材记录使用 `material_id/url/source/title/description/published_at/fetched_at/read_scope/keywords/fingerprint`。当前列表适配器只承诺标题或简介的阅读范围；零记忆也可探索，分享行为不会写成用户喜好。
+
+角色同一轮决定是否发、选题、正文与下次联系；主请求省略 `tools`。联系元数据示例：
+
+```text
+正文
+<选题>候选编号</选题>
+<下次联系>明天20:30｜想问问面试怎么样了</下次联系>
+```
+
+联系标签还支持带时区的绝对时间、`等新进展` 和 `暂停`。元数据在通用咒语前剥离，不进 QQ、终端反馈或事实证据；同一助手消息按 ID 幂等采用。剥离后的同一份正文用于输出存档和 QQ 投递。
+
+普通回复没有新标签时保留仍有效的未来计划；到期领取的计划先记为已消费，无新安排就等待新事件，重启不再次领取旧 revision。只有真实新事件或到期计划才触发联系模型，素材采集器没有独立发送循环。
+
+投递顺序为规范正文 → `/v1/outputs` → `deliverByIndex` → `/v1/outputs/deliver`。已开始的生成和本轮气泡完整结束后再处理新输入，异常或卸载释放 `beginOutput` 的等待句柄。源失效、更正、禁提和过期继续在投递前校验。
+
+## 5. 当前交付边界
+
+| 项目 | 本机状态 |
+|---|---|
+| 绑定恢复、通用按索引投递、段端口 | 已有模拟适配器与构建验证 |
+| 兴趣依据与关于主人段落 | 核心提供来源；段落复用现有人格修订与演化 |
+| 统一候选、联系计划、旧输出归属 | 本机联合验收完成，待服务器同步 |
+| 主请求零工具、标签隐私、分段回执与重启 | 本批统一核对 |
+| 服务器安装 | 本机验收后按固定 Git 提交及新 wheel/tgz 手动同步 |
 
 ## 6. 验收记录(本卡)
 

@@ -922,6 +922,8 @@ class MemoryRequestHandler(BaseHTTPRequestHandler):
         protocol_paths = path in (
             "/v1/events", "/v1/receipts", "/v1/receipts/summary",
             "/v1/context/validate", "/v1/context/reserve",
+            "/v1/context/consume",
+            "/v1/segment/note",
             "/v1/cleanup/pending",
         ) or path.endswith("/ack")
         if not identity["admin"] and not protocol_paths:
@@ -932,7 +934,7 @@ class MemoryRequestHandler(BaseHTTPRequestHandler):
                 self.server.stop_event.set()
                 self._send(202, {"status": "stopping"})
             elif protocol_paths:
-                result = management.protocol_get(path, body) if method == "GET" else management.protocol_post(path, body)
+                result = management.protocol_get(path, body, identity=identity) if method == "GET" else management.protocol_post(path, body, identity=identity)
                 if result is None:
                     self._send(405, {"code": "method_not_allowed"})
                 else:
