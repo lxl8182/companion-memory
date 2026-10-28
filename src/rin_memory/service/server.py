@@ -732,19 +732,36 @@ class MemoryRequestHandler(BaseHTTPRequestHandler):
         """§4.3: a loopback service still checks Host/Origin."""
         host = (self.headers.get("Host") or "").strip()
         allowed = getattr(self.server, "allowed_hosts", ("127.0.0.1", "localhost"))
+        request_origin = None
         if host:
-            name = host.rsplit(":", 1)[0].strip("[]").lower()
+            try:
+                authority = urlsplit("//" + host)
+                name = (authority.hostname or "").lower()
+                port = authority.port or 80
+                if authority.username is not None or authority.password is not None or (
+                    authority.path or authority.query or authority.fragment
+                ):
+                    raise ValueError("invalid Host authority")
+            except ValueError:
+                raise ApiError("forbidden", "host is not allowed")
             if name not in allowed:
                 raise ApiError("forbidden", f"host {name!r} is not allowed")
+            request_origin = ("http", name, port)
         origin = (self.headers.get("Origin") or "").strip()
         allow_origin = getattr(self.server, "allow_origin", "")
-        if origin:
-            parsed = urlsplit(origin)
-            own_port = self.server.server_address[1]
-            if origin != allow_origin and not (
-                parsed.scheme == "http" and parsed.hostname in allowed
-                and parsed.port == own_port
-            ):
+        if origin and origin != allow_origin:
+            try:
+                parsed = urlsplit(origin)
+                # SSH forwarding preserves the browser's Host, including its
+                # local port; the server's listening port can be different.
+                same_origin = (
+                    (parsed.scheme, parsed.hostname, parsed.port or 80) == request_origin
+                    and parsed.username is None and parsed.password is None
+                    and not (parsed.path or parsed.query or parsed.fragment)
+                )
+            except ValueError:
+                same_origin = False
+            if not same_origin:
                 raise ApiError("forbidden", "origin is not allowed")
 
     def _send_bytes(self, status: int, body: bytes, content_type: str) -> None:

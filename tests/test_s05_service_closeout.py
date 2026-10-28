@@ -85,9 +85,10 @@ class ServiceCloseoutTests(unittest.TestCase):
         self.env.stop()
         self.tmp.cleanup()
 
-    def request(self, path, body=None, *, client="console", token=None):
+    def request(self, path, body=None, *, client="console", token=None, headers=None):
         headers = {"Content-Type": "application/json", "X-Companion-Client": client,
-                   "X-Companion-Token": self.token if token is None else token}
+                   "X-Companion-Token": self.token if token is None else token,
+                   **(headers or {})}
         req = urllib.request.Request(self.url + path, headers=headers,
             data=None if body is None else json.dumps(body, ensure_ascii=False).encode())
         try:
@@ -111,6 +112,50 @@ class ServiceCloseoutTests(unittest.TestCase):
                 "source_key": "host:test:private:" + request_id,
                 "messages": [{"role": "user", "content": "我喜欢乌龙茶"}],
                 "session_id": "session", **kwargs}
+
+    def test_tunnel_origin_can_delete_a_fact(self):
+        self.service.core.facts.save("test", [{
+            "id": "tunnel-fact", "text": "隧道删除验收事实", "subject": "private",
+            "schema_version": 2, "source": "user_observation",
+            "source_event_keys": ["host:test:private:tunnel-fact"],
+        }])
+        headers = {"Host": "127.0.0.1:14931", "Origin": "http://127.0.0.1:14931"}
+        self.ok("/v1/bootstrap", headers=headers)
+        receipt = self.ok("/v1/cleanup/delete", {
+            "type": "fact", "id": "tunnel-fact", "request_id": "tunnel-delete",
+        }, headers=headers)
+        self.assertEqual(receipt["status"], "completed")
+        self.assertFalse(any(row["id"] == "tunnel-fact"
+                             for row in self.service.core.facts.load("test")))
+
+    def test_cross_origin_and_untrusted_host_requests_stay_blocked(self):
+        for host, origin in (
+            ("127.0.0.1:14931", "http://evil.test"),
+            ("127.0.0.1:14931", "http://127.0.0.1:3080"),
+            ("127.0.0.1:14931", self.url),
+            ("127.0.0.1:14931", "http://localhost:14931"),
+            ("127.0.0.1:14931", "https://127.0.0.1:14931"),
+            ("127.0.0.1:14931", "null"),
+            ("127.0.0.1:14931", "http://127.0.0.1:bad"),
+            ("evil.test:14931", "http://evil.test:14931"),
+        ):
+            with self.subTest(host=host, origin=origin):
+                code, error = self.request("/v1/cleanup/delete", {
+                    "type": "fact", "id": "any-fact",
+                }, headers={"Host": host, "Origin": origin})
+                self.assertEqual(code, 403, error)
+                self.assertEqual(error["code"], "forbidden")
+
+    def test_loopback_authorities_and_explicit_origin_remain_supported(self):
+        for host, origin in (
+            ("127.0.0.1", "http://127.0.0.1"),
+            ("localhost:14931", "http://localhost:14931"),
+            ("[::1]:14931", "http://[::1]:14931"),
+        ):
+            with self.subTest(host=host):
+                self.ok("/v1/bootstrap", headers={"Host": host, "Origin": origin})
+        self.server.allow_origin = "https://console.example"
+        self.ok("/v1/bootstrap", headers={"Origin": self.server.allow_origin})
 
     def test_context_event_delivery_cleanup_and_restart(self):
         self.initialize()
