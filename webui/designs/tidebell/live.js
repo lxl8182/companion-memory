@@ -21,6 +21,9 @@
     selectedEvent: null, selectedRevision: null,
     cleanupKind: "all", cleanupLimit: CLEAN_PAGE_SIZE,
     modalConfirm: null,
+    // A persona edit that lost the revision race is kept here, so "载入最新版本"
+    // can rebase the same draft instead of making the user retype it.
+    personaDraft: null,
   };
   window.RIN_LIVE = LIVE;
   const SERVICE = Boolean(window.__RIN_SERVICE__);
@@ -29,11 +32,63 @@
   const SECTION_LABELS = {
     identity: "身份", tone: "语气", relationship: "相处", habits: "习惯",
     boundaries: "边界", aesthetic: "审美", interests: "兴趣", speech: "语言习惯",
+    about_owner: "关于主人", dialogue_examples: "对话示例",
   };
   const SECTION_CLASS = {
     tone: "tone", relationship: "rel", boundaries: "bound", aesthetic: "hobby",
     habits: "hobby", interests: "hobby",
   };
+
+  // A section id is a stable key, never a sentence: whitespace never belongs
+  // in one and unsupported punctuation cannot survive a round trip, so the
+  // editor derives the id from the human name and caps it below the backend
+  // limit (120) while the name is still short enough to read.
+  const NEW_SECTION_ID_MAX = 60;
+  const SECTION_TEXT_MAX = 4000;
+  const SECTION_SCENES = [
+    ["all", "全部场景"],
+    ["game", "仅游戏会话"],
+    ["plugin", "仅插件会话"],
+    ["session", "仅指定会话"],
+  ];
+  // Creation-time templates only: each one fills the same ordinary `add`
+  // operation, so a preset goes through the same revision, publish, rollback
+  // and freeze path as a hand-typed section. A preset is a convenience, never
+  // a whitelist: any other name is equally valid.
+  const SECTION_PRESET_UI = [
+    { id: "about_owner", label: "关于主人", kind: "profile", evolution: true, frozen: false },
+    { id: "dialogue_examples", label: "对话示例", kind: "examples", evolution: false, frozen: true },
+    { id: "tone", label: "语气", kind: "tone", evolution: true, frozen: false },
+    { id: "relationship", label: "相处", kind: "relationship", evolution: true, frozen: false },
+    { id: "habits", label: "习惯", kind: "habits", evolution: true, frozen: false },
+    { id: "interests", label: "兴趣", kind: "interests", evolution: true, frozen: false },
+    { id: "boundaries", label: "边界", kind: "boundaries", evolution: true, frozen: false },
+  ];
+  // Engine refusals are stable codes; the editor says what to do about them
+  // instead of showing a bare `duplicate_section`.
+  const SECTION_REASON_LABELS = {
+    duplicate_section: "已经有同名段落，请直接编辑它，不会重复新建",
+    invalid_section_id: "段落标识只能用字母、数字、中文、下划线、连字符和点",
+    section_id_too_long: "段落标识太长（最多 120 字）",
+    invalid_operation: "保存请求不完整，请刷新后重试",
+    text_too_long: "段落正文过长（最多 4000 字）",
+    section_frozen: "这一段已冻结，自动演化不会改写它",
+    section_not_editable: "这一段没有开放给自动演化",
+    unknown_section: "找不到这个段落，请刷新后重试",
+    no_change: "没有实际改动",
+    base_revision_conflict: "版本已更新，草稿已保留",
+    not_initialized: "还没有初始人格卡",
+    no_initial_card: "还没有可恢复的初始人格卡",
+    source_deleted: "段落来源已被删除",
+  };
+  const FIELD_STYLE = "width:100%;padding:10px 12px;border:1px solid var(--line);"
+    + "background:rgba(255,253,248,.9);font:inherit;font-size:14.5px;line-height:1.7;color:var(--ink)";
+  const SMALL_FIELD = "width:150px;padding:5px 8px;border:1px solid var(--line);"
+    + "background:rgba(255,253,248,.9);font:inherit;font-size:13px;color:var(--ink)";
+  const PERM_ROW_STYLE = "display:flex;align-items:center;gap:8px;font-size:13px;"
+    + "color:var(--ink-2);margin:0 0 9px";
+  const EDITOR_ERROR_STYLE = "border-left-color:rgba(157,79,102,.6);"
+    + "background:linear-gradient(120deg,rgba(242,188,198,.2),rgba(242,188,198,.07))";
   const CONSUMER_LABELS = {
     chat: "网页对话", neko_chat: "N.E.K.O 对话", realtime: "实时会话", game: "游戏人格", active: "主动交流",
   };
@@ -46,6 +101,171 @@
     // Real cards imported from the host use host_profile_<中文> / host_override_<中文>.
     const stripped = key.replace(/^host_(profile|override|system_prompt)_/, "");
     return stripped || "段落";
+  }
+
+  /* ---------- section identity / permissions (shared by both editors) ---------- */
+
+  // The backend refuses whitespace, slashes, quotes and punctuation in a new
+  // section id, and it refuses to silently truncate one: a shortened id would
+  // address a *different* section on the next revision. So the editor derives a
+  // key that already satisfies the rule, and tells the user what it derived.
+  function sectionIdFromName(name) {
+    // \p{L}/\p{N} rather than \w: the backend accepts letters in any script, so
+    // 「看世界的方式」 must survive instead of being stripped to nothing.
+    const slug = String(name || "").replace(/\s+/g, "_")
+      .replace(/[^\p{L}\p{N}_.\-]/gu, "")
+      .replace(/_+/g, "_").replace(/^[_.\-]+|[_.\-]+$/g, "");
+    return slug.slice(0, NEW_SECTION_ID_MAX);
+  }
+
+  function sectionIdsOf(card) {
+    return new Set(((card && card.sections) || []).map((row) => String(row.section_id || "")));
+  }
+
+  // A section only renders for the subject stored in its scope, so a new section
+  // copies the subject the card already uses instead of guessing "private" (a
+  // card configured with another identity would hide the new section).
+  function defaultSubject(card) {
+    const counts = {};
+    ((card && card.sections) || []).forEach((row) => {
+      const subject = String(((row.scope || {}).subject) || "private");
+      counts[subject] = (counts[subject] || 0) + 1;
+    });
+    let best = "private";
+    Object.keys(counts).forEach((key) => { if (counts[key] > (counts[best] || 0)) best = key; });
+    return best;
+  }
+
+  // One sentence for what a section currently permits. Freezing is stated first
+  // because it wins over every other permission, and a frozen section never
+  // stops the user from editing it by hand.
+  function permSummary(section) {
+    if (!section) return "";
+    const evolution = !!(section.editable_by && section.editable_by.evolution);
+    if (section.frozen) {
+      return "已冻结 · 自动演化不改动"
+        + (evolution ? "（允许演化被冻结覆盖）" : "") + " · 你仍可手改";
+    }
+    return (evolution ? "可演化 · 自动演化会改写" : "固定 · 自动演化不改") + " · 你仍可手改";
+  }
+
+  function scopeSummary(section) {
+    const scope = (section && section.scope) || {};
+    const subject = String(scope.subject || "private");
+    const applies = scope.applies_to;
+    let where = "全部场景";
+    if (applies && typeof applies === "object") {
+      if (applies.game_id) where = "仅游戏 " + String(applies.game_id);
+      else if (applies.plugin_id) where = "仅插件 " + String(applies.plugin_id);
+      else if (applies.session_id) where = "仅会话 " + String(applies.session_id);
+    }
+    return (subject === "private" ? "本人" : subject) + " · " + where;
+  }
+
+  function sceneOfChoice(choice, detail) {
+    const value = String(detail || "").trim().slice(0, 64);
+    if (choice === "game") return { game_id: value || "sts2" };
+    if (choice === "plugin") return { plugin_id: value || "dsh_memory" };
+    if (choice === "session") return { session_id: value || "console" };
+    return null;
+  }
+
+  function sceneChoiceOf(scope) {
+    const applies = (scope && scope.applies_to) || null;
+    if (!applies || typeof applies !== "object") return ["all", ""];
+    if (applies.game_id) return ["game", String(applies.game_id)];
+    if (applies.plugin_id) return ["plugin", String(applies.plugin_id)];
+    if (applies.session_id) return ["session", String(applies.session_id)];
+    return ["all", ""];
+  }
+
+  function sectionReasonLabel(reason) {
+    const key = String(reason || "");
+    return SECTION_REASON_LABELS[key] || key || "操作被拒绝";
+  }
+
+  function sceneOptions(selected) {
+    return SECTION_SCENES.map(([value, label]) => '<option value="' + value + '"'
+      + (value === selected ? " selected" : "") + ">" + esc(label) + "</option>").join("");
+  }
+
+  // Permission + reach controls for one section. They are scoped to the block
+  // that renders them rather than addressed by section id, so a host-imported id
+  // with dots or CJK in it can never confuse a selector.
+  const FROZEN_WINS_NOTE = "冻结优先于允许演化：两个都勾选时，自动演化仍然完全不会改写这一段。"
+    + "解冻后才按「允许演化」判定；你手改永远不受影响。";
+
+  function permControls(section) {
+    const evolution = !!(section && section.editable_by && section.editable_by.evolution);
+    const frozen = !!(section && section.frozen);
+    const [scene, detail] = sceneChoiceOf((section && section.scope) || {});
+    return '<div class="perm">'
+      + '<label style="' + PERM_ROW_STYLE + '"><input type="checkbox" data-perm-evolution'
+      + (evolution ? " checked" : "") + ">允许演化改写这一段</label>"
+      + '<label style="' + PERM_ROW_STYLE + '"><input type="checkbox" data-perm-frozen'
+      + (frozen ? " checked" : "") + ">冻结（自动演化完全不改）</label>"
+      + '<label style="' + PERM_ROW_STYLE + '">作用范围 <select data-perm-scene style="'
+      + SMALL_FIELD + '">' + sceneOptions(scene) + "</select>"
+      + '<input data-perm-scene-detail value="' + esc(detail)
+      + '" placeholder="可选：游戏/插件/会话标识" style="' + SMALL_FIELD
+      + ';width:190px' + (scene === "all" ? ";opacity:.5" : "") + '"></label>'
+      + '<p class="dim perm-note" style="font-size:12.5px;margin:2px 0 0;line-height:1.6">'
+      + esc(FROZEN_WINS_NOTE) + "</p>"
+      + "</div>";
+  }
+
+  // Only the evolution half of editable_by is a console choice: the engine enforces
+  // `evolution` here and `user` elsewhere, so the flag is carried through untouched
+  // from the section being patched (see permPatch) rather than guessed.
+  function readPermControls(scopeNode) {
+    const root = scopeNode || document;
+    const evolution = $("[data-perm-evolution]", root);
+    const frozen = $("[data-perm-frozen]", root);
+    const scene = $("[data-perm-scene]", root);
+    const detail = $("[data-perm-scene-detail]", root);
+    return {
+      editable_by: { user: true, evolution: !!(evolution && evolution.checked) },
+      frozen: !!(frozen && frozen.checked),
+      scene: scene ? scene.value : "all",
+      sceneDetail: detail ? detail.value : "",
+    };
+  }
+
+  // A section's scene reach as the engine stores it: a plugin/game/session map,
+  // or nothing at all for "every scene". The backend always reads a missing map
+  // as "applies everywhere", so the two spellings below are interchangeable.
+  function sceneReach(scope) {
+    const applies = (scope || {}).applies_to;
+    if (!applies || typeof applies !== "object") return null;
+    const reach = {};
+    ["game_id", "plugin_id", "session_id"].forEach((key) => {
+      const value = String(applies[key] || "").trim();
+      if (value) reach[key] = value;
+    });
+    return Object.keys(reach).length ? reach : null;
+  }
+
+  // Only what changed travels as an operation; an untouched permission must not
+  // rewrite a section that the user never opened.
+  function permPatch(section, current) {
+    const patch = {};
+    const stored = section.editable_by || {};
+    const wasEvolution = !!stored.evolution;
+    if (wasEvolution !== current.editable_by.evolution) {
+      // `user` is the engine's own flag; carry it over instead of reopening a
+      // section that was deliberately closed to hand edits.
+      patch.editable_by = { user: stored.user !== false, evolution: current.editable_by.evolution };
+    }
+    if (!!section.frozen !== current.frozen) patch.frozen = current.frozen;
+    const wasReach = sceneReach(section.scope);
+    const nextReach = sceneOfChoice(current.scene, current.sceneDetail);
+    if (JSON.stringify(wasReach) !== JSON.stringify(nextReach)) {
+      const scope = Object.assign({}, section.scope || {});
+      if (nextReach) scope.applies_to = nextReach;
+      else delete scope.applies_to;
+      patch.scope = scope;
+    }
+    return patch;
   }
 
   function fmtTime(iso) {
@@ -155,6 +375,12 @@
       const detail = (payload && (payload.error || payload)) || {};
       const error = new Error((detail.code || response.status) + " · " + (detail.message || "请求失败"));
       error.status = response.status;
+      // A refusal carries a stable reason instead of prose: the card editor
+      // turns `duplicate_section` and friends back into one actionable
+      // sentence, so the user never has to read a bare engine code.
+      error.code = String(detail.code || response.status);
+      error.reason = error.code === "rejected" ? String(detail.message || "") : String(detail.reason || "");
+      error.payload = detail;
       throw error;
     }
     return payload;
@@ -766,26 +992,33 @@
     const title = $('[data-page="persona"] .page-title');
     if (title) title.textContent = "人格卡 · 第 " + (card.revision || 0) + " 版";
     const sub = $('[data-page="persona"] .page-sub');
-    if (sub) sub.textContent = sections.length + " 段 · " + evolvable + " 可演化 / " + frozen + " 冻结 · 编辑会创建新版本";
+    if (sub) sub.textContent = sections.length + " 段 · " + evolvable + " 可演化 / " + frozen
+      + " 冻结 · 冻结优先于允许演化 · 编辑会创建新版本";
     const secHint = $("#secHint");
-    if (secHint) secHint.textContent = "第 " + (card.revision || 0) + " 版 · 冻结段不可被自动演化覆盖";
+    if (secHint) secHint.textContent = "第 " + (card.revision || 0)
+      + " 版 · 冻结优先于允许演化：冻结段自动演化完全不改，解冻后才看「允许演化」";
     const tools = $('[data-page="persona"] .page-tools');
     if (tools) tools.innerHTML = '<button type="button" class="btn" data-live-refresh>刷新数据</button>'
+      + '<button type="button" class="btn" data-live-new-section>新增段落</button>'
       + '<button type="button" class="btn pri" data-live-edit-persona>编辑人格卡</button>';
 
     const grid = $('[data-page="persona"] .secs.wide');
     if (grid) {
       grid.innerHTML = sections.map((section) => {
         const cls = SECTION_CLASS[section.section_id] || "";
+        const evolution = !!(section.editable_by && section.editable_by.evolution);
         const badge = section.frozen
           ? '<span class="badge frz">已冻结 · 自动演化不改动</span>'
-          : '<span class="badge">' + (section.editable_by && section.editable_by.evolution ? "可演化" : "固定") + "</span>";
+          : '<span class="badge">' + (evolution ? "可演化" : "固定") + "</span>";
         return '<div class="sec ' + cls + '"><div class="hd"><b>' + esc(sectionLabel(section.section_id))
           + "</b>" + badge + '<span class="right">第 ' + esc(section.revision || 0) + ' 版</span></div><p>'
           + esc(section.text).replace(/\n/g, "<br>") + '</p><div class="sec-actions">'
           + '<button type="button" data-live-edit="' + esc(section.section_id) + '">编辑</button>'
           + '<button type="button" data-live-freeze="' + esc(section.section_id) + '" data-frozen="' + (section.frozen ? "1" : "0") + '">'
-          + (section.frozen ? "解冻" : "冻结") + "</button></div></div>";
+          + (section.frozen ? "解冻" : "冻结") + "</button>"
+          + '<span class="dim" style="font-size:12px;margin-left:auto;white-space:nowrap" title="'
+          + esc(permSummary(section) + " · " + scopeSummary(section)) + '">'
+          + esc(scopeSummary(section)) + "</span></div></div>";
       }).join("");
     }
     const list = $('[data-page="persona"] .split.persona .panel:nth-child(2) .card-b');
@@ -1825,46 +2058,299 @@
     return ["名字: " + name].concat(rest).join("\n").replace(/\n{3,}/g, "\n\n");
   }
 
+  // One editable block: prose, then the permissions that decide who may rewrite
+  // it and where it reaches. Every section is shown — including ones closed to
+  // evolution — because "open this one to evolution" is itself a card edit.
+  function sectionEditorBlock(section, isIdentity) {
+    // A custom section's label *is* its id; repeating it would read as a stutter.
+    const label = sectionLabel(section.section_id);
+    return '<div class="detail-sec" data-sec-block="' + esc(section.section_id) + '"><h4>'
+      + esc(label)
+      + '<span class="dim" style="font-weight:400;font-size:12.5px;margin-left:8px">'
+      + (label === section.section_id ? "" : esc(section.section_id) + " · ")
+      + "第 " + esc(section.revision || 0) + " 版 · "
+      + esc(permSummary(section)) + "</span></h4>"
+      + '<textarea data-live-edit-text="' + esc(section.section_id) + '" maxlength="' + SECTION_TEXT_MAX
+      + '" rows="' + (isIdentity ? "5" : "4") + '" style="' + FIELD_STYLE + ';resize:vertical">'
+      + esc(section.text) + "</textarea>"
+      + permControls(section)
+      + '<p class="dim" style="font-size:12px;margin:4px 0 0">' + esc(scopeSummary(section)) + "</p>"
+      + "</div>";
+  }
+
   function openPersonaEditor() {
     const persona = LIVE.snapshot.persona || {};
     const card = persona.card || { sections: [], revision: 0 };
-    const rows = (card.sections || []).filter((section) => section.editable_by && section.editable_by.user);
-    const fieldStyle = 'width:100%;padding:10px 12px;border:1px solid var(--line);'
-      + 'background:rgba(255,253,248,.9);font:inherit;font-size:14.5px;line-height:1.7;color:var(--ink)';
-    const name = nameLineOf((rows.find((row) => row.section_id === "identity") || {}).text);
+    const sections = card.sections || [];
+    const name = nameLineOf((sections.find((row) => row.section_id === "identity") || {}).text);
+    const ids = sectionIdsOf(card);
+    const presets = SECTION_PRESET_UI.filter((preset) => !ids.has(preset.id));
     openLiveDrawer("编辑人格卡", "基于第 " + (card.revision || 0) + " 版 · 保存会创建新版本",
       '<div class="detail-sec" style="margin-top:0"><h4>名字</h4>'
-      + '<input id="liveNameField" maxlength="80" value="' + esc(name) + '" style="' + fieldStyle + '">'
+      + '<input id="liveNameField" maxlength="80" value="' + esc(name) + '" style="' + FIELD_STYLE + '">'
       + '<p class="dim" style="font-size:12.5px;margin:6px 0 0">保存在身份段第一行「名字: …」，下面正文无需重复写名字。</p></div>'
-      + rows.map((section) => '<div class="detail-sec" style="margin-top:0"><h4>' + esc(sectionLabel(section.section_id))
-        + '</h4><textarea data-live-edit-text="' + esc(section.section_id) + '" rows="6" style="'
-        + fieldStyle + ';resize:vertical">' + esc(section.text) + "</textarea></div>").join("")
-      + '<details style="margin:16px 0"><summary>新增可演化段落</summary><label>段落类型 <select id="newSectionKind">'
-      + ["tone", "relationship", "habits", "interests", "boundaries"].filter((kind) => !(card.sections || []).some((row) => row.section_id === kind))
-        .map((kind) => '<option value="' + kind + '">' + esc(sectionLabel(kind)) + '</option>').join("")
-      + '</select></label><textarea id="newSectionText" rows="3" style="display:block;width:100%;margin-top:10px;font:inherit" placeholder="填写段落内容，留空则不新增"></textarea></details>'
+      + sections.map((section) => sectionEditorBlock(section, section.section_id === "identity")).join("")
+      + '<details id="newSectionPanel" style="margin:18px 0 0;border-top:1px solid var(--line-2);padding-top:16px">'
+      + "<summary>新增段落</summary>"
+      + '<p class="dim" style="font-size:12.5px;margin:10px 0;line-height:1.6">段落是自由语义单位：预设只填好默认权限，任何名字都能新建。无法开放的字符会被去掉并写进段落标识。</p>'
+      + '<label style="display:block;font-size:13px;color:var(--ink-3);margin:0 0 5px">预设</label>'
+      + '<select id="newSectionPreset" style="' + FIELD_STYLE + '"><option value="">自定义段落…</option>'
+      + presets.map((preset) => '<option value="' + esc(preset.id) + '">' + esc(preset.label) + "</option>").join("")
+      + "</select>"
+      + '<label style="display:block;font-size:13px;color:var(--ink-3);margin:12px 0 5px">段落名</label>'
+      + '<input id="newSectionName" maxlength="' + NEW_SECTION_ID_MAX + '" placeholder="例如：看世界的方式" style="'
+      + FIELD_STYLE + '">'
+      + '<p id="newSectionIdHint" class="dim" style="font-size:12.5px;margin:6px 0 0;line-height:1.6"></p>'
+      + '<label style="display:block;font-size:13px;color:var(--ink-3);margin:12px 0 5px">正文</label>'
+      + '<textarea id="newSectionText" rows="3" maxlength="' + SECTION_TEXT_MAX + '" style="' + FIELD_STYLE
+      + ';resize:vertical" placeholder="这一段说什么；留空则不新增"></textarea>'
+      + '<p id="newSectionError" role="alert" class="note" style="display:none;font-size:12.5px;line-height:1.6"></p>'
+      + '<div data-new-block>'
+      + permControls({ editable_by: { user: true, evolution: true }, frozen: false, scope: {} })
+      + "</div>"
+      + "</details>"
+      + '<p id="liveEditorError" role="alert" class="note" style="display:none"></p>'
       + '<div class="detail-act"><button type="button" class="btn" data-live-editor-cancel>取消</button>'
       + '<button type="button" class="btn pri" data-live-editor-save>保存为新版本</button></div>');
     $("#drawer").dataset.baseRevision = String(card.revision);
     $("#drawer").dataset.nameLine = name;
+    bindSectionEditor(sections);
+    restorePersonaDraft();
   }
 
-  async function savePersonaEditor() {
-    const persona = LIVE.snapshot.persona || {};
-    const card = persona.card || { sections: [], revision: 0 };
+  function showEditorError(message) {
+    const node = $("#liveEditorError");
+    if (!node) { if (message) toast(message); return; }
+    node.textContent = message || "";
+    node.style.cssText = message
+      ? ("display:block;font-size:12.5px;line-height:1.6;" + EDITOR_ERROR_STYLE) : "display:none";
+  }
+
+  function showNewSectionError(message) {
+    const node = $("#newSectionError");
+    if (!node) { if (message) toast(message); return; }
+    node.textContent = message || "";
+    node.style.cssText = message
+      ? ("display:block;font-size:12.5px;line-height:1.6;" + EDITOR_ERROR_STYLE) : "display:none";
+  }
+
+  // Blocks are found by their data attribute value, never by a selector built
+  // from a section id: host-imported ids may contain dots or CJK characters.
+  function sectionBlock(sectionId) {
+    return $$("[data-sec-block]").find((node) => node.dataset.secBlock === sectionId) || null;
+  }
+
+  function newSectionBlock() { return $("[data-new-block]"); }
+
+  // The derived id, the preset choice and the permission controls have to agree,
+  // so they are wired as one small form instead of three independent listeners.
+  function bindSectionEditor(sections) {
+    const byId = {};
+    // A name collides when its derived id exists *or* when it reads the same as an
+    // existing section: someone typing「语气」means the stored `tone` section, and
+    // silently creating a second "语气" would be two sections with one meaning.
+    const labelToId = {};
+    (sections || []).forEach((section) => {
+      byId[section.section_id] = section;
+      labelToId[sectionLabel(section.section_id)] = section.section_id;
+    });
+    const preset = $("#newSectionPreset");
+    const nameInput = $("#newSectionName");
+    const hint = $("#newSectionIdHint");
+    const block = newSectionBlock();
+
+    const refreshHint = () => {
+      if (!hint) return;
+      const name = nameInput ? nameInput.value.trim() : "";
+      // A chosen preset owns its documented id; a custom name is turned into one.
+      const chosen = preset ? SECTION_PRESET_UI.find((row) => row.id === preset.value) : null;
+      const id = chosen ? chosen.id : sectionIdFromName(name);
+      hint.style.color = "";
+      if (!name) { hint.textContent = "留空则不新增段落。段落名会转成稳定的段落标识。"; return; }
+      if (!id) {
+        hint.textContent = "这个名字里没有可用字符，请加上文字、字母或数字。";
+        hint.style.color = "var(--rose)";
+        return;
+      }
+      const clash = byId[id] ? id : (labelToId[name] || "");
+      if (clash) {
+        hint.textContent = "「" + sectionLabel(clash) + "」已存在（标识 " + clash
+          + "），请直接编辑上面的段落，不会重复新建。";
+        hint.style.color = "var(--rose)";
+        return;
+      }
+      hint.textContent = "段落标识 · " + id
+        + (!chosen && id !== name ? "（已按规则整理）" : "");
+    };
+
+    const syncSceneDetail = () => {
+      if (!block) return;
+      const scene = $("[data-perm-scene]", block);
+      const detail = $("[data-perm-scene-detail]", block);
+      if (scene && detail) detail.style.opacity = scene.value === "all" ? ".5" : "1";
+    };
+
+    // Picking a preset fills its defaults; going back to 自定义段落 must clear
+    // them again, or a section created right after trying a preset silently keeps
+    // that preset's permissions instead of the neutral ones.
+    let lastPresetLabel = "";
+    const setPerms = (evolutionOn, frozenOn) => {
+      const evolution = $("[data-perm-evolution]", block);
+      const frozen = $("[data-perm-frozen]", block);
+      if (evolution) evolution.checked = !!evolutionOn;
+      if (frozen) frozen.checked = !!frozenOn;
+      const note = $(".perm-note", block);
+      if (note) note.style.color = frozenOn ? "var(--rose)" : "";
+    };
+
+    const applyPreset = () => {
+      if (!preset || !block) return;
+      const chosen = SECTION_PRESET_UI.find((row) => row.id === preset.value);
+      if (!chosen) {
+        setPerms(true, false);
+        if (nameInput && nameInput.value === lastPresetLabel) nameInput.value = "";
+        lastPresetLabel = "";
+        syncSceneDetail();
+        refreshHint();
+        return;
+      }
+      if (nameInput) nameInput.value = chosen.label;
+      lastPresetLabel = chosen.label;
+      setPerms(chosen.evolution, chosen.frozen);
+      syncSceneDetail();
+      refreshHint();
+    };
+
+    if (preset) preset.addEventListener("change", applyPreset);
+    if (nameInput) nameInput.addEventListener("input", refreshHint);
+    // A frozen section that is still open to evolution is exactly the case the
+    // precedence note exists for: colour the note where the choice is made.
+    $$("[data-sec-block]").concat(block ? [block] : []).forEach((node) => {
+      const frozenBox = $("[data-perm-frozen]", node);
+      const note = $(".perm-note", node);
+      if (!frozenBox || !note) return;
+      const paint = () => { note.style.color = frozenBox.checked ? "var(--rose)" : ""; };
+      frozenBox.addEventListener("change", paint);
+      paint();
+    });
+    if (block) {
+      const scene = $("[data-perm-scene]", block);
+      if (scene) scene.addEventListener("change", syncSceneDetail);
+    }
+    syncSceneDetail();
+    refreshHint();
+  }
+
+  // A draft that lost the revision race is restored into the reopened editor at
+  // whatever the current revision is, so a conflict costs no typing.
+  function capturePersonaDraft(baseRevision) {
+    const texts = {};
+    $$("[data-live-edit-text]").forEach((node) => { texts[node.dataset.liveEditText] = node.value; });
+    const perms = {};
+    $$("[data-sec-block]").forEach((block) => {
+      perms[block.dataset.secBlock] = readPermControls(block);
+    });
+    const nameField = $("#liveNameField");
+    const preset = $("#newSectionPreset");
+    const nameInput = $("#newSectionName");
+    const newText = $("#newSectionText");
+    const block = newSectionBlock();
+    return {
+      baseRevision: Number(baseRevision),
+      name: nameField ? nameField.value : "",
+      texts,
+      perms,
+      newSection: {
+        preset: preset ? preset.value : "",
+        name: nameInput ? nameInput.value : "",
+        text: newText ? newText.value : "",
+        perms: block ? readPermControls(block) : null,
+      },
+    };
+  }
+
+  function restorePermControls(block, state) {
+    if (!block || !state) return;
+    const evolution = $("[data-perm-evolution]", block);
+    const frozen = $("[data-perm-frozen]", block);
+    const scene = $("[data-perm-scene]", block);
+    const detail = $("[data-perm-scene-detail]", block);
+    if (evolution) evolution.checked = !!(state.editable_by && state.editable_by.evolution);
+    if (frozen) frozen.checked = !!state.frozen;
+    if (scene) scene.value = state.scene || "all";
+    if (detail) {
+      detail.value = state.sceneDetail || "";
+      detail.style.opacity = (state.scene || "all") === "all" ? ".5" : "1";
+    }
+  }
+
+  function applyPersonaDraft(draft) {
+    if (!draft) return;
+    const nameField = $("#liveNameField");
+    if (nameField && draft.name != null) nameField.value = draft.name;
+    $$("[data-live-edit-text]").forEach((node) => {
+      const value = draft.texts[node.dataset.liveEditText];
+      if (typeof value === "string") node.value = value;
+    });
+    Object.keys(draft.perms || {}).forEach((sid) => {
+      restorePermControls(sectionBlock(sid), draft.perms[sid]);
+    });
+    const fresh = draft.newSection || {};
+    const preset = $("#newSectionPreset");
+    const nameInput = $("#newSectionName");
+    const newText = $("#newSectionText");
+    if (preset) preset.value = fresh.preset || "";
+    if (nameInput) nameInput.value = fresh.name || "";
+    if (newText) newText.value = fresh.text || "";
+    restorePermControls(newSectionBlock(), fresh.perms);
+    if (fresh.text && fresh.text.trim()) {
+      const panel = $("#newSectionPanel");
+      if (panel) panel.open = true;
+    }
+    const hint = $("#newSectionIdHint");
+    if (hint && nameInput) nameInput.dispatchEvent(new Event("input"));
+  }
+
+  function restorePersonaDraft() {
+    const draft = LIVE.personaDraft;
+    if (!draft) return;
+    LIVE.personaDraft = null;
+    applyPersonaDraft(draft);
+    toast("草稿已恢复，确认后再次保存");
+  }
+
+  function closePersonaEditor() {
+    const drawer = $("#drawer");
+    if (drawer) drawer.classList.remove("on");
+    const mask = $("#drawerMask");
+    if (mask) mask.classList.remove("on");
+  }
+
+  async function retryPersonaEditor() {
+    const draft = LIVE.personaDraft;
+    // Reload first: the retry has to carry the revision the card is on now,
+    // not the one the failed save was based on.
+    await refresh();
+    LIVE.personaDraft = draft;
+    openPersonaEditor();
+  }
+
+  // Build one revision of operations from the form. Everything that did not
+  // change stays out, so saving a permission flip never rewrites untouched prose.
+  function personaEditorOperations(card) {
     const operations = [];
     const nameField = $("#liveNameField");
     const name = nameField ? nameField.value.trim() : "";
     const identity = (card.sections || []).find((row) => row.section_id === "identity");
-    const identityField = $('[data-live-edit-text="identity"]');
+    const identityField = $("[data-live-edit-text=\"identity\"]");
     // The name box and the identity body are one stored section: write the
     // name line back into the body the user is editing, then revise once.
-    if (identity && (name !== ($("#drawer").dataset.nameLine || "") || identityField)) {
+    if (identity) {
       const body = identityField ? identityField.value : identity.text;
-      const merged = name ? withNameLine(body, name) : body;
-      if (merged !== identity.text) {
-        operations.push({ op: "replace", section_id: "identity", text: merged });
-      }
+      // Only the full editor owns the name box. The one-section drawer edits the
+      // identity body as-is, so it must not rewrite (or drop) the name line.
+      const merged = (nameField && name) ? withNameLine(body, name) : body;
+      if (merged !== identity.text) operations.push({ op: "replace", section_id: "identity", text: merged });
     }
     $$("[data-live-edit-text]").forEach((node) => {
       if (node.dataset.liveEditText === "identity") return;
@@ -1873,25 +2359,110 @@
         operations.push({ op: "replace", section_id: section.section_id, text: node.value });
       }
     });
+    $$("[data-sec-block]").forEach((block) => {
+      const sid = block.dataset.secBlock;
+      const section = (card.sections || []).find((row) => row.section_id === sid);
+      if (!section) return;
+      const patch = permPatch(section, readPermControls(block));
+      if (!Object.keys(patch).length) return;
+      const existing = operations.find((op) => op.section_id === sid);
+      if (existing) Object.assign(existing, patch);
+      else operations.push(Object.assign({ op: "replace", section_id: sid, text: section.text }, patch));
+    });
+    return operations;
+  }
+
+  async function savePersonaEditor() {
+    const persona = LIVE.snapshot.persona || {};
+    const card = persona.card || { sections: [], revision: 0 };
+    const operations = personaEditorOperations(card);
+    showEditorError("");
+    showNewSectionError("");
     const newText = $("#newSectionText");
     if (newText && newText.value.trim()) {
-      const kind = $("#newSectionKind").value;
-      if (!kind) { toast("所有段落类型均已存在，请编辑已有段落"); return; }
-      operations.push({ op: "add", section_id: kind, kind, text: newText.value.trim(),
-                        editable_by: { user: true, evolution: true }, scope: { subject: (LIVE.snapshot.meta || {}).subject || "private" } });
+      const nameInput = $("#newSectionName");
+      const name = nameInput ? nameInput.value.trim() : "";
+      const presetSelect = $("#newSectionPreset");
+      const chosen = (presetSelect && presetSelect.value)
+        ? SECTION_PRESET_UI.find((row) => row.id === presetSelect.value) : null;
+      // A preset keeps its documented id (`about_owner`), which is the stable key
+      // other surfaces address; a custom section derives a key from its own name.
+      const id = chosen ? chosen.id : sectionIdFromName(name);
+      if (!name) { showNewSectionError("请先填写段落名，再写正文。"); return; }
+      if (!id) { showNewSectionError("这个名字里没有可用字符，请加上文字、字母或数字。"); return; }
+      // The same two ways of colliding as the live hint: the derived id is taken,
+      // or the typed name reads the same as a section that is already on the card.
+      const takenById = sectionIdsOf(card).has(id);
+      const takenByLabel = (card.sections || []).find((row) => sectionLabel(row.section_id) === name);
+      if (takenById || takenByLabel) {
+        const clash = takenById ? id : takenByLabel.section_id;
+        showNewSectionError("「" + sectionLabel(clash) + "」已存在（标识 " + clash
+          + "），请直接编辑上面那一段，不会产生重复段落。");
+        return;
+      }
+      const perms = readPermControls(newSectionBlock());
+      const subject = defaultSubject(card);
+      const scope = { subject };
+      const reach = sceneOfChoice(perms.scene, perms.sceneDetail);
+      if (reach) scope.applies_to = reach;
+      // A preset only fills defaults; the same operation shape is used for a
+      // hand-typed section. frozen is always sent, so an explicit choice in this
+      // form wins over the examples default exactly as the backend documents.
+      operations.push({
+        op: "add", section_id: id, kind: chosen ? chosen.kind : id,
+        text: newText.value.trim(), scope,
+        editable_by: perms.editable_by, frozen: perms.frozen,
+      });
     }
     if (!operations.length) { toast("没有修改"); return; }
-    const result = await write("/api/persona/revise", {
-      base_revision: Number($("#drawer").dataset.baseRevision),
-      operations,
-      reason: "webui edit",
-      request_id: rid("ui-revise"),
-    }, (result) => decisionToast(result, "已保存为新版本"));
-    if (result) {
-      const drawer = $("#drawer");
-      if (drawer) drawer.classList.remove("on");
-      const mask = $("#drawerMask");
-      if (mask) mask.classList.remove("on");
+    await submitPersonaOperations(operations, Number($("#drawer").dataset.baseRevision));
+  }
+
+  async function submitPersonaOperations(operations, baseRevision) {
+    const button = $("[data-live-editor-save]");
+    if (button && button.disabled) return;
+    if (button) { button.disabled = true; button.textContent = "正在保存…"; }
+    try {
+      const result = await api("/api/persona/revise", {
+        method: "POST",
+        body: JSON.stringify({
+          base_revision: baseRevision,
+          operations,
+          reason: "webui edit",
+          request_id: rid("ui-revise"),
+        }),
+      });
+      CHAT.loaded = false;
+      LIVE.personaDraft = null;
+      closePersonaEditor();
+      await refresh();
+      toast(decisionToast(result, "已保存为新版本"));
+    } catch (error) {
+      if (error.status === 409) {
+        // The card moved on under us. Keep every field the user typed and offer
+        // a rebase against the current revision instead of dropping the draft.
+        LIVE.personaDraft = capturePersonaDraft(baseRevision);
+        const current = (error.payload && error.payload.current) || {};
+        const mine = "第 " + baseRevision + " 版";
+        const theirs = current.revision != null ? "第 " + current.revision + " 版" : "更新版本";
+        showEditorError(mine + "上的保存与" + theirs + "冲突，你的草稿已保留。点「载入最新版本」把草稿带到最新版本，再次保存即可。");
+        const act = $("#drawerBody .detail-act");
+        if (act && !$("[data-live-editor-rebase]")) {
+          const rebase = document.createElement("button");
+          rebase.type = "button";
+          rebase.className = "btn";
+          rebase.dataset.liveEditorRebase = "1";
+          rebase.textContent = "载入最新版本";
+          act.insertBefore(rebase, act.firstChild);
+        }
+      } else if (error.reason) {
+        showEditorError("保存被拒绝：" + sectionReasonLabel(error.reason));
+      } else {
+        showEditorError("保存失败：" + error.message);
+      }
+      return null;
+    } finally {
+      if (button) { button.disabled = false; button.textContent = "保存为新版本"; }
     }
   }
 
@@ -2022,21 +2593,44 @@
       openPersonaEditor();
       return;
     }
+    const newSection = target.closest("[data-live-new-section]");
+    if (newSection) {
+      event.preventDefault();
+      openPersonaEditor();
+      const panel = $("#newSectionPanel");
+      if (panel) {
+        panel.open = true;
+        panel.scrollIntoView({ block: "center" });
+      }
+      const field = $("#newSectionName");
+      if (field) field.focus();
+      return;
+    }
     const edit = target.closest("[data-live-edit]");
     if (edit) {
       event.preventDefault();
       const sectionId = edit.dataset.liveEdit;
       const persona = LIVE.snapshot.persona || {};
-      const section = (persona.card.sections || []).find((row) => row.section_id === sectionId);
+      const card = persona.card || { sections: [], revision: 0 };
+      const section = (card.sections || []).find((row) => row.section_id === sectionId);
       if (!section) return;
-      openLiveDrawer("编辑段落 · " + sectionLabel(sectionId), "基于第 " + (persona.card.revision || 0) + " 版",
-        '<div class="detail-sec" style="margin-top:0"><h4>' + esc(sectionLabel(sectionId)) + "</h4>"
-        + '<textarea data-live-edit-text="' + esc(sectionId) + '" rows="6" style="width:100%;padding:10px 12px;'
-        + 'border:1px solid var(--line);background:rgba(255,253,248,.9);font:inherit;font-size:14.5px;line-height:1.7;'
-        + 'color:var(--ink);resize:vertical">' + esc(section.text) + "</textarea></div>"
+      // The one-section drawer is the same block as the full editor, so the
+      // permissions here behave identically to the ones further up the card.
+      openLiveDrawer("编辑段落 · " + sectionLabel(sectionId),
+        "基于第 " + (card.revision || 0) + " 版 · " + scopeSummary(section),
+        sectionEditorBlock(section, section.section_id === "identity")
+        + '<p id="liveEditorError" role="alert" class="note" style="display:none"></p>'
         + '<div class="detail-act"><button type="button" class="btn" data-live-editor-cancel>取消</button>'
         + '<button type="button" class="btn pri" data-live-editor-save>保存为新版本</button></div>');
-      $("#drawer").dataset.baseRevision = String(persona.card.revision);
+      $("#drawer").dataset.baseRevision = String(card.revision);
+      bindSectionEditor([section]);
+      restorePersonaDraft();
+      return;
+    }
+    const rebase = target.closest("[data-live-editor-rebase]");
+    if (rebase) {
+      event.preventDefault();
+      await retryPersonaEditor();
       return;
     }
     const save = target.closest("[data-live-editor-save]");
@@ -2048,10 +2642,7 @@
     const cancel = target.closest("[data-live-editor-cancel]");
     if (cancel) {
       event.preventDefault();
-      const drawer = $("#drawer");
-      if (drawer) drawer.classList.remove("on");
-      const mask = $("#drawerMask");
-      if (mask) mask.classList.remove("on");
+      closePersonaEditor();
       return;
     }
     const cleanKind = target.closest("[data-clean-kind]");
