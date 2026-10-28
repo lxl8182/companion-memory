@@ -208,19 +208,43 @@ class OutboxStore:
 
     def complete(self, character: str, op_id: str) -> None:
         """Mark an op done; it never replays again."""
-        self._require_op_id(op_id)
+        self.complete_many(character, (op_id,))
+
+    def complete_many(self, character: str, op_ids: Sequence[str]) -> int:
+        """Mark several ops done in one critical section; returns the count.
+
+        RO02 batch extraction finishes a whole batch at once: one model call
+        covers N queued turns, so N ops become done together. The ledger format
+        does not change -- a batch completion is still one `done` record per
+        op_id, written under the same per-character lock, so a reader sees
+        either "all still pending" or "all done" per append and a crash in the
+        middle leaves the rest pending (they replay, and the batch is deduped by
+        its deterministic id). Rewriting the file would have to coordinate with
+        compaction and the host's append-only readers for no gain.
+        """
+        ids: list[str] = []
+        for op_id in op_ids or ():
+            self._require_op_id(op_id)
+            if op_id not in ids:
+                ids.append(op_id)
+        if not ids:
+            return 0
         self._permit.assert_writable(
             "outbox.complete", str(self._path(character, create=False)),
         )
-        record = {
-            "op_id": op_id,
-            "status": _STATUS_DONE,
-            "ts": self._clock.now().isoformat(),
-        }
+        timestamp = self._clock.now().isoformat()
+        path = self._path(character)
         with self._lock_for(character):
-            self._store.append_line(
-                self._path(character), json.dumps(record, ensure_ascii=False),
-            )
+            for op_id in ids:
+                record = {
+                    "op_id": op_id,
+                    "status": _STATUS_DONE,
+                    "ts": timestamp,
+                }
+                self._store.append_line(
+                    path, json.dumps(record, ensure_ascii=False),
+                )
+        return len(ids)
 
     def fail(self, character: str, op_id: str, *, error: str) -> int:
         """Record a failed attempt, return the new count, dead-letter at the limit.

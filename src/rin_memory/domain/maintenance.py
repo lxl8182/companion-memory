@@ -291,8 +291,13 @@ class MaintenanceService:
                     try:
                         statuses: list[str] = []
                         for _ in range(self._settings.synthesis_limit):
-                            outcome = await self._call(
+                            # The background pass is the one caller that
+                            # honours the normal synthesis interval (RO02):
+                            # the service merges new evidence and waits instead
+                            # of paying for another call inside the window.
+                            outcome = await self._call_optional_flag(
                                 self._reflection_service.synthesize, name,
+                                respect_interval=True,
                             )
                             status = _outcome_status(outcome)
                             statuses.append(status)
@@ -658,6 +663,17 @@ class MaintenanceService:
         """Pass limit= only when the dependency accepts it (fake-friendly)."""
         try:
             return await self._call(fn, character, limit=limit)
+        except TypeError:
+            return await self._call(fn, character)
+
+    async def _call_optional_flag(
+        self, fn: Any, character: str, *, respect_interval: bool = True,
+    ) -> Any:
+        """Pass an opt-in flag only when the dependency accepts it."""
+        try:
+            return await self._call(
+                fn, character, respect_interval=respect_interval,
+            )
         except TypeError:
             return await self._call(fn, character)
 

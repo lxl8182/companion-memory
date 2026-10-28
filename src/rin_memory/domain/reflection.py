@@ -246,6 +246,18 @@ class ReflectionSettings:
     time_promote_days: float = 7.0
     max_synthesis_attempts: int = 5
     dead_letter_self_heal_seconds: float = 5 * 3600.0
+    #: RO02: minimum interval between *normal* syntheses (design section 6.3).
+    #: It is not the retry backoff and not the row cooldown: new evidence that
+    #: arrives inside the interval is merged and waited for instead of
+    #: producing another model call, while a retry after a failure keeps using
+    #: `max_synthesis_attempts` and the backoff entry. Zero disables it.
+    #:
+    #: The interval is a *scheduling* rule for the background pass, so it is
+    #: only applied when the caller asks for it (`synthesize(...,
+    #: respect_interval=True)`). Direct callers -- explicit teaching,
+    #: corrections, deletions and operator requests -- must never wait for it,
+    #: which is exactly the carve-out section 6.3 describes.
+    normal_interval_minutes: float = 30.0
     archive_after_days: float = 30.0
     sub_zero_archive_days: int = 14
     render_max_tokens: int = 2000
@@ -829,7 +841,9 @@ class ReflectionService:
 
     # -- synthesis ------------------------------------------------------
 
-    async def synthesize(self, character: str) -> SynthesisOutcome:
+    async def synthesize(
+        self, character: str, *, respect_interval: bool = False,
+    ) -> SynthesisOutcome:
         """Apply one local operation to the existing understandings, if due.
 
         The model now sees the related old understandings and the strategies
@@ -861,6 +875,13 @@ class ReflectionService:
                 and not self._dead_letter_healed(entry)
             ):
                 return SynthesisOutcome("skipped", reason="dead_letter")
+            if respect_interval and not self._normal_synthesis_due(
+                character, settings,
+            ):
+                # New evidence inside the normal interval waits: the batch is
+                # neither settled nor failed, so it is evaluated on a later
+                # round with the same key and the same sources.
+                return SynthesisOutcome("skipped", reason="normal_interval")
             if self._no_change_settled(entry):
                 # This exact evidence batch already reported "nothing new".
                 # No model call: the marker lives on the backoff entry, whose
@@ -957,19 +978,26 @@ class ReflectionService:
                 operation = "add"
             topic_value = _bounded(parsed.get("topic"), MAX_TOPIC_CHARS) or topic
             if operation == "split":
-                return self._apply_split(
+                outcome = self._apply_split(
                     character, rows, parsed, usable, capped, text,
                     topic_value, scene, backoff_key,
                 )
-            if operation in ("reinforce", "refine") and target is not None:
-                return self._apply_maintain(
+            elif operation in ("reinforce", "refine") and target is not None:
+                outcome = self._apply_maintain(
                     character, rows, target, operation, parsed, text,
                     usable, capped, scene, backoff_key,
                 )
-            return self._apply_new(
-                character, rows, parsed, text, operation, usable, capped,
-                topic_value, scene, target, backoff_key,
-            )
+            else:
+                outcome = self._apply_new(
+                    character, rows, parsed, text, operation, usable, capped,
+                    topic_value, scene, target, backoff_key,
+                )
+            # Only a synthesis that actually produced an understanding starts
+            # the normal interval; a duplicate/skipped/failed result must not
+            # delay the next real attempt.
+            if outcome.status == "completed":
+                self._mark_normal_synthesis(character)
+            return outcome
 
     # -- operation helpers ----------------------------------------------
 
@@ -2745,6 +2773,42 @@ class ReflectionService:
         return applied["ok"]
 
     # -- backoff --------------------------------------------------------
+
+    #: Reserved backoff entry that records when the last *normal* synthesis
+    #: happened. It lives in synth_backoff.json because that document is
+    #: already journaled, capped and restored on restart -- a separate file
+    #: would need its own replay handler for one timestamp. The key can never
+    #: collide with a real batch: real keys are hashes of fact id sets, and
+    #: this one is a fixed marker that `reflection_id_from_facts` never emits.
+    _NORMAL_INTERVAL_KEY = "__normal_interval__"
+
+    def _normal_synthesis_due(self, character: str, settings: Any) -> bool:
+        """Whether the normal synthesis interval has elapsed.
+
+        Retry backoff is deliberately not consulted here: a failed batch is
+        retried as soon as the caller is allowed to, and its attempt count is
+        tracked on its own entry.
+        """
+        minutes = float(getattr(settings, "normal_interval_minutes", 0.0) or 0.0)
+        if minutes <= 0.0:
+            return True
+        doc = self._store.load_backoff(character)
+        entry = doc.get(self._NORMAL_INTERVAL_KEY) or {}
+        last = _parse_iso(entry.get("at"), self._clock.now())
+        if last is None:
+            return True
+        elapsed = (self._clock.now() - last).total_seconds()
+        return elapsed >= minutes * 60.0
+
+    def _mark_normal_synthesis(self, character: str) -> None:
+        """Record a normal synthesis so the interval starts now."""
+        with self._lock_for(character):
+            doc = self._store.load_backoff(character)
+            entry = dict(doc.get(self._NORMAL_INTERVAL_KEY) or {})
+            entry["n"] = _as_int(entry.get("n"), 0) + 1
+            entry["at"] = _now_iso(self._clock.now())
+            doc[self._NORMAL_INTERVAL_KEY] = entry
+            self._store.save_backoff(character, doc)
 
     def _bump_backoff(self, character: str, key: str) -> None:
         with self._lock_for(character):

@@ -154,6 +154,23 @@ def _number(table: dict, key: str, default: float, *, integer=False):
     return value
 
 
+def _nonnegative_number(table: dict, key: str, default: float):
+    """Like `_number` but 0 is meaningful (RO02 batch idle window).
+
+    For `batch_idle_seconds` the value is a policy selector, not a duration
+    that must be positive: 0 means "extract on the next maintenance round".
+    """
+    value = table.get(key, default)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        raise StackConfigError(f"service.{key}: must be zero or positive")
+    return value
+
+
 def _table(raw: dict, key: str, prefix: str = "") -> dict:
     value = raw.get(key, {})
     if not isinstance(value, dict):
@@ -269,6 +286,12 @@ def load_config(path: Path | str) -> StackConfig:
         require_published_persona=True,
         clients=clients,
         max_pending_events=_number(cfg, "max_pending_events", 1024, integer=True),
+        # RO02 cost switch, not an optional nicety: without it production pays
+        # one extraction call per turn. Read from [service] so an existing
+        # stack.toml keeps working; the shipped template sets 120 explicitly.
+        batch_idle_seconds=_nonnegative_number(cfg, "batch_idle_seconds", 120),
+        batch_max_turns=_number(cfg, "batch_max_turns", 5, integer=True),
+        batch_max_messages=_number(cfg, "batch_max_messages", 16, integer=True),
         model=ModelSettings(
             base_url=base_url, api_key_env=key_env, models=tiers,
             timeout_s=_number(cfg, "model_timeout_s", 60),
@@ -335,6 +358,14 @@ max_body_bytes = 2097152
 startup_timeout_s = 20
 shutdown_timeout_s = 30
 maintenance_interval_s = 60
+
+# RO02 成本优化开关（不是可选项）：普通提取合批。同一作用域积累 5 轮，或
+# 最后一次用户发言后空闲 batch_idle_seconds 秒，满足其一即处理；0 表示每个
+# 维护轮立刻处理（旧行为，调用次数多）。原始轮次先落盘再入队，任何取值都不会
+# 丢事实，只会影响"多久变成长期记忆"。
+batch_idle_seconds = 120
+batch_max_turns = 5
+batch_max_messages = 16
 
 [models.service]
 base_url = ''

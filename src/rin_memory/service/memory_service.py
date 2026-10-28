@@ -29,6 +29,7 @@ from ..adapters.model_http import HttpModelInvoker, ModelSettings
 from ..domain.persona_teaching import PersonaTeachingService
 from ..domain.turns import TurnCommitService
 from ..domain.evolution import EvolutionSettings
+from ..domain.extraction import ExtractionSettings
 from ..errors import RootLockConflict
 from ..persistence.ownership import RootLock, acquire_root_lock
 from ..persistence.persona_teaching import PersonaTeachingStore
@@ -83,6 +84,16 @@ class ServiceSettings:
     require_published_persona: bool = False
     clients: Mapping[str, Any] = field(default_factory=dict)
     max_pending_events: int = 1024
+    #: RO02 batch extraction. A partial group of ordinary turns waits this long
+    #: after the last utterance before it is extracted. 0.0 = "extract
+    #: immediately on the next maintenance round" (the historical behaviour);
+    #: 120.0 = the cost-optimizing production policy. Neither loses a turn: the
+    #: raw turn is persisted before it is queued.
+    batch_idle_seconds: float = 0.0
+    #: Turns per batch; five is the design's figure (section 6.2).
+    batch_max_turns: int = 5
+    #: Input budget for one batch call; a bigger group is split before the call.
+    batch_max_messages: int = 16
 
 
 @dataclass
@@ -239,6 +250,11 @@ class MemoryService:
                 local_state_root=settings.local_state_root,
                 model=model,
                 evolution_settings=EvolutionSettings(enabled=True),
+                extraction_settings=ExtractionSettings(
+                    batch_idle_seconds=settings.batch_idle_seconds,
+                    batch_max_turns=settings.batch_max_turns,
+                    batch_max_messages=settings.batch_max_messages,
+                ),
             )
             service = cls(settings, core=core, lock=lock, model=model)
             recovery = core.recover(settings.character)

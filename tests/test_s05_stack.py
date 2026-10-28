@@ -57,6 +57,37 @@ class StackTests(unittest.TestCase):
                 load_config(self.config_path)
         self.config_path.write_text(text, encoding="utf-8")
 
+    def test_shipped_template_enables_batch_extraction_explicitly(self):
+        """RO02 cost switch: the template must set 120, not inherit 0.0.
+
+        The code default is 0.0 ("extract on the next round") so an existing
+        deployment does not silently change latency; production therefore has
+        to opt in, and the shipped template is what does it.
+        """
+        text = self.config_path.read_text(encoding="utf-8")
+        self.assertIn("batch_idle_seconds = 120", text)
+        self.assertIn("batch_max_turns = 5", text)
+        settings = load_config(self.config_path).service
+        self.assertEqual(settings.batch_idle_seconds, 120.0)
+        self.assertEqual(settings.batch_max_turns, 5)
+        # An older config without the keys keeps the production policy too: the
+        # reader's default is the same 120, so upgrading does not require a
+        # hand edit to keep saving calls.
+        stripped = text.replace("batch_idle_seconds = 120\n", "")
+        self.config_path.write_text(stripped, encoding="utf-8")
+        self.assertEqual(
+            load_config(self.config_path).service.batch_idle_seconds, 120.0,
+        )
+        # ... and an explicit 0 (the unit-test / immediate policy) is honoured.
+        self.config_path.write_text(
+            stripped.replace("[models.service]", "batch_idle_seconds = 0\n\n[models.service]"),
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            load_config(self.config_path).service.batch_idle_seconds, 0.0,
+        )
+        self.config_path.write_text(text, encoding="utf-8")
+
     def test_runtime_python_preserves_virtualenv_symlink(self):
         python = Path(self.tmp.name) / "venv" / "bin" / "python"
         python.parent.mkdir(parents=True)
