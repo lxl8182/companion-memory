@@ -50,7 +50,14 @@ class ServiceProtocol:
 
     def basis(self) -> dict:
         snapshot = self.core.barrier.snapshot(self.character)
-        return {"deletion_version": snapshot.deletion_version, "correction_version": snapshot.correction_version}
+        # The basis is the deletion/correction fence and nothing else: `validate`
+        # compares it to decide a context receipt went stale, so adding an
+        # unrelated version here would invalidate every live receipt on the next
+        # interest write. The interest version is reported as its own layer key.
+        return {
+            "deletion_version": snapshot.deletion_version,
+            "correction_version": snapshot.correction_version,
+        }
 
     @staticmethod
     def scope(body: Mapping) -> dict:
@@ -103,6 +110,7 @@ class ServiceProtocol:
         state = recall.get("companion_state")
         summary = recall.get("working_summary")
         episode = recall.get("episode_summary")
+        signals = recall.get("interest_signals")
         return {
             "working_summary": dict(summary) if isinstance(summary, Mapping) else None,
             "state": dict(state) if isinstance(state, Mapping) else dict(
@@ -111,6 +119,13 @@ class ServiceProtocol:
             "state_version": int(recall.get("companion_state_version") or 0),
             "episode": dict(episode) if isinstance(episode, Mapping) else None,
             "threads_source": str(recall.get("threads_source") or "none"),
+            # RO03: interest evidence as *data*, never as prose, plus the
+            # version of that data. A caller can show what the `about_owner`
+            # section may be written from, and two reads inside one generation
+            # turn report the same version (a new turn sees the new one).
+            "interest_signals": dict(signals) if isinstance(signals, Mapping) else {},
+            "interest_version": int(signals.get("version") or 0)
+            if isinstance(signals, Mapping) else 0,
         }
 
     def issue(self, scope: Mapping, recall: dict, *, basis: dict | None = None) -> dict:

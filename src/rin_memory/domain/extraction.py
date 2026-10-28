@@ -32,6 +32,7 @@ from ..persistence.gates import SuppressionGate
 from ..persistence.outbox import OutboxStore
 from ..persistence.recent import RecentStore
 from ..ports import Clock, EventSink, ModelInvoker, StorageRoots, WritePermit
+from .profile import SIGNAL_PROMPT
 
 DEFAULT_TIER = "summary"
 DEFAULT_TIMEOUT_S = 60.0
@@ -151,6 +152,9 @@ class ExtractionOutcome:
     source_keys: tuple[str, ...] = ()
     #: Conversation-state operations applied from this batch.
     state_applied: int = 0
+    #: Interest signals written from this batch (RO03); 0 when none, when the
+    #: layer is unwired, or when every candidate lacked a resolvable citation.
+    signals_written: int = 0
 
 
 class ExtractionService:
@@ -174,6 +178,7 @@ class ExtractionService:
         corrections: Any = None,
         conversation_state: Any = None,
         proactive: Any = None,
+        interests: Any = None,
     ) -> None:
         self._roots = roots
         self._sink = sink
@@ -190,6 +195,7 @@ class ExtractionService:
         self._corrections = corrections
         self._conversation_state = conversation_state
         self._proactive = proactive
+        self._interests = interests
 
     # -- ingest ----------------------------------------------------------
 
@@ -655,6 +661,10 @@ class ExtractionService:
                 )
                 + "\n当前同范围事项：" + json.dumps(list(state.items)[:20], ensure_ascii=False)
             )
+        if self._interests is not None:
+            # Only ask for what can be stored: an unwired layer must not add
+            # tokens to every extraction call.
+            prompt += SIGNAL_PROMPT
         try:
             raw = await self._model.invoke(
                 settings.tier,
@@ -687,7 +697,7 @@ class ExtractionService:
             )
             self._settle_op(character, op_ids, outcome)
             return outcome
-        raw_candidates, raw_updates = parsed
+        raw_candidates, raw_updates, raw_signals = parsed
         candidates = [
             candidate for candidate in (
                 _bind_candidate(candidate, utterances) for candidate in raw_candidates
@@ -710,13 +720,40 @@ class ExtractionService:
                 state_applied = self._conversation_state.apply_sequence(
                     character, entries, metadata=metadata,
                 )
+        # Interest signals are written after the barrier freshness check above,
+        # so a signal can never be recorded from a window the user has since
+        # deleted; the service drops any candidate whose own citations do not
+        # resolve to a user utterance (no source, no signal).
+        signals_written = self._record_signals(character, raw_signals, utterances)
         outcome = ExtractionOutcome(
             "completed", facts_written=written, batch_id=batch_id,
+            signals_written=signals_written,
             candidates=tuple(dict(row) for row in persisted),
             source_keys=tuple(all_keys), state_applied=state_applied,
         )
         self._settle_op(character, op_ids, outcome)
         return outcome
+
+    def _record_signals(
+        self,
+        character: str,
+        signals: Any,
+        utterances: Sequence[Mapping[str, Any]],
+    ) -> int:
+        """Persist the interest signals of one extraction answer (RO03).
+
+        Deliberately quiet: the interest layer is additive evidence for the
+        `about_owner` section, so a failure here must not fail an extraction
+        that already wrote good facts, and must not leave the window pending.
+        A signal whose citations do not resolve is discarded inside the service
+        rather than stored without a source.
+        """
+        if self._interests is None or not signals:
+            return 0
+        try:
+            return int(self._interests.record(character, signals, utterances) or 0)
+        except Exception:  # noqa: BLE001 - additive layer, never fatal
+            return 0
 
     def _batch_reference(
         self, character: str, utterances: Sequence[Mapping[str, Any]],
@@ -788,6 +825,7 @@ class ExtractionService:
         context_keys: list[str] = []
         metadata = metadata_of(kept[0])
         state_updates = []
+        signals = []
         if content_class == SHARED_EXPERIENCE:
             candidates = [_shared_experience_candidate(kept)]
         else:
@@ -820,6 +858,9 @@ class ExtractionService:
                     "\n本轮原始时间：" + (occurred_at or self._clock.now()).isoformat()
                     + "\n当前同范围事项：" + json.dumps(list(state.items)[:20], ensure_ascii=False)
                 )
+            if self._interests is not None:
+                # Only ask for what can be stored (see the batched path).
+                prompt += SIGNAL_PROMPT
             try:
                 raw = await self._model.invoke(
                     settings.tier,
@@ -833,7 +874,7 @@ class ExtractionService:
             parsed = _parse_extraction(raw, settings.max_candidates)
             if parsed is None:
                 return ExtractionOutcome("failed", reason="parse")
-            candidates, state_updates = parsed
+            candidates, state_updates, signals = parsed
             if self._barrier.is_stale(character, snapshot):
                 return ExtractionOutcome("stale", reason="barrier_stale")
         candidates = [dict(candidate, subject=metadata.get("subject", "private"),
@@ -853,9 +894,20 @@ class ExtractionService:
                 )
             except ValueError as exc:
                 return ExtractionOutcome("failed", reason=f"state_update:{exc}")
+        # One turn is one utterance, exactly as the fact window is: the same
+        # citations (`evidence_keys`) and the same business time, so a signal
+        # and the fact stating it can be traced to the identical support.
+        signals_written = self._record_signals(character, signals, [{
+            "index": 1,
+            "has_user": any(_is_human_message(message) for message in kept),
+            "source_keys": list(evidence_keys),
+            "metadata": metadata,
+            "occurred_at": occurred_at or self._clock.now(),
+        }])
         return ExtractionOutcome(
             "completed", facts_written=written,
             candidates=tuple(dict(row) for row in persisted),
+            signals_written=signals_written,
         )
 
 
@@ -1378,7 +1430,7 @@ def _build_batch_prompt(
 
 def _parse_batch_extraction(
     raw: Any, limit: int,
-) -> tuple[list[dict[str, Any]], list[dict]] | None:
+) -> tuple[list[dict[str, Any]], list[dict], list[dict]] | None:
     """Parse the batched answer; same shape, one extra citation field."""
     return _parse_extraction(raw, limit)
 
@@ -1522,8 +1574,24 @@ def _build_prompt(
     )
 
 
-def _parse_extraction(raw: Any, limit: int) -> tuple[list[dict[str, Any]], list[dict]] | None:
-    """Accept the combined extraction result and existing fact-only arrays."""
+def _parse_extraction(
+    raw: Any, limit: int,
+) -> tuple[list[dict[str, Any]], list[dict], list[dict]] | None:
+    """Accept the combined extraction result and existing fact-only arrays.
+
+    Three shapes are valid, and the first two predate RO03:
+
+    * a bare JSON array of facts (the original contract, and still the answer
+      when no state/signal layer is wired);
+    * an object with `facts` + `state_updates` (M7);
+    * that object plus `interest_signals` (RO03).
+
+    `interest_signals` is optional on purpose: a model that answers with the
+    old shape is not a parse failure, it simply reported no signals. Only the
+    fact list and `state_updates` stay mandatory, because a missing `facts` key
+    would turn "no facts" into "unreadable answer" and keep the window pending
+    forever.
+    """
     if not isinstance(raw, str):
         return None
     text = raw.strip()
@@ -1538,12 +1606,22 @@ def _parse_extraction(raw: Any, limit: int) -> tuple[list[dict[str, Any]], list[
         data = json.loads(text)
     except (json.JSONDecodeError, ValueError):
         return None
-    updates = []
+    updates: Any = []
+    signals: Any = []
     if isinstance(data, Mapping):
         updates = data.get("state_updates", [])
+        signals = data.get("interest_signals", [])
         data = data.get("facts")
-    if not isinstance(data, list) or not isinstance(updates, list):
+    if not isinstance(data, list):
         return None
+    if updates is None:
+        updates = []
+    if not isinstance(updates, list):
+        return None
+    if not isinstance(signals, list):
+        # A malformed signal list is dropped, not fatal: the facts in the same
+        # answer are still good and the window is worth completing.
+        signals = []
     if any(not isinstance(item, Mapping) for item in updates):
         return None
     candidates: list[dict[str, Any]] = []
@@ -1554,7 +1632,9 @@ def _parse_extraction(raw: Any, limit: int) -> tuple[list[dict[str, Any]], list[
         if not str(candidate.get("text") or "").strip():
             continue
         candidates.append(candidate)
-    return candidates, [dict(item) for item in updates[:8]]
+    return candidates, [dict(item) for item in updates[:8]], [
+        dict(item) for item in signals[:limit] if isinstance(item, Mapping)
+    ]
 
 
 def _parse_candidates(raw: Any, limit: int) -> list[dict[str, Any]] | None:

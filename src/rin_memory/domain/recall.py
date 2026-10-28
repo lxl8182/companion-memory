@@ -1611,6 +1611,7 @@ class RecallService:
         roots: Any = None,
         state: Any = None,
         working_summary: Any = None,
+        interests: Any = None,
     ) -> None:
         self._clock: Clock = clock if clock is not None else _FallbackClock()
         self._facts = facts
@@ -1630,6 +1631,7 @@ class RecallService:
         # rather than a fabricated one.
         self._state = state
         self._working_summary = working_summary
+        self._interests = interests
 
     @property
     def settings(self) -> RecallSettings:
@@ -1907,7 +1909,15 @@ class RecallService:
         样" had no thread to continue.
         """
         start = self._clock.monotonic()
-        extras = self._turn_extras(character, subject=subject, scene=scene, language=language)
+        # RO03: the turn's own words must reach the summary projector, or
+        # `important_facts` can only ever be "the most important rows" and a
+        # plain picture turn inherits facts that have nothing to do with it.
+        # One build per call is the snapshot: this read is never cached across
+        # turns, so the next turn sees the next version.
+        extras = self._turn_extras(
+            character, subject=subject, scene=scene, language=language,
+            current_input=str(current_input or ""),
+        )
         threads = open_threads if open_threads is not None else extras["threads"]
         followup = self._resolve_followup(
             character, current_input, subject=subject, scene=scene,
@@ -1954,7 +1964,39 @@ class RecallService:
         )
         result["episode_summary"] = extras["episode"]
         result["followup"] = followup
+        # RO03: interest evidence is reported, never injected as prose. The
+        # section it feeds (`about_owner`) is written by the user or by
+        # evolution; this is the material that decision is made from, so a
+        # caller can show it without the core writing the persona.
+        result["interest_signals"] = self._interest_snapshot(
+            character, subject=subject, scene=scene,
+        )
         return result
+
+    def _interest_snapshot(
+        self, character: Any, *, subject: Any, scene: Any,
+    ) -> dict[str, Any]:
+        """Interest evidence for this subject/scene (RO03), never raising.
+
+        The empty shape is used whenever the layer is unwired or the store
+        cannot be read: a caller that reports this always gets the same keys.
+        """
+        empty = {
+            "version": 0, "items": [], "stable_interests": [],
+            "recent_interests": [], "avoid_topics": [],
+        }
+        service = self._interests
+        if service is None:
+            return empty
+        name = str(character or "").strip()
+        if not name:
+            return empty
+        try:
+            return dict(service.snapshot(
+                name, subject=str(subject or "private"), scene=scene,
+            ))
+        except Exception:  # noqa: BLE001 - evidence layer is additive
+            return empty
 
     def _resolve_followup(
         self,
@@ -1997,6 +2039,7 @@ class RecallService:
         subject: Any,
         scene: Any,
         language: str,
+        current_input: str = "",
     ) -> dict[str, Any]:
         """Read the state snapshot and the summary projections once (never raises)."""
         extras: dict[str, Any] = {
@@ -2025,6 +2068,7 @@ class RecallService:
             try:
                 summary = self._working_summary.build(
                     name, subject=subject_key, scene=scene, language=language,
+                    query=current_input,
                 )
             except Exception:  # noqa: BLE001 - a summary never fails a turn
                 summary = None

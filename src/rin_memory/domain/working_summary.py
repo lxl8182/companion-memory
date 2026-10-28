@@ -49,6 +49,7 @@ from ..invalidation import normalize_text
 from ..ports import Clock
 from .recall import (
     HIDDEN_STATUSES,
+    content_terms,
     episode_id_of,
     entry_applies_to_scene,
     normalize_scene,
@@ -77,6 +78,9 @@ _OPEN_STATE_KINDS = ("progress", "concerns", "thoughts")
 _WAITING_KINDS = frozenset({"progress", "concerns"})
 
 _MAX_ITEMS_PER_SECTION = 6
+#: Facts offered to one generated turn. Three is the ceiling, not a target: a
+#: turn that shares no terms with anything stored gets none (RO03).
+_TURN_FACT_LIMIT = 3
 _MAX_EPISODES = 3
 _MAX_ITEMS_PER_EPISODE = 6
 _TEXT_LIMIT = 240
@@ -295,8 +299,30 @@ class WorkingSummaryService:
         scene: Any = None,
         language: str = "zh",
         max_items: int | None = None,
+        query: str | None = None,
     ) -> WorkingSummary:
-        """Derive every section for one turn (never raises, always returns)."""
+        """Derive every section for one turn (never raises, always returns).
+
+        `query` is the turn's own words (RO03). It changes **only** the
+        `important_facts` section, and it is the difference between the two
+        callers that exist:
+
+        * `query is None` -- the administrative view (`/v1/working-summary`,
+          the background audit cache): "what do we know about this person",
+          importance ordered, `max_items` rows;
+        * `query` is a string -- the per-turn view: "what of that is relevant to
+          *this* message". Relevance is a gate, not a tiebreak, so a turn with
+          no shareable terms (a bare "在吗", an image-only turn) gets **zero**
+          facts instead of the three most important ones. That substitution is
+          the bug this parameter exists to fix: "主人给了我服务器" used to be
+          injected into every turn, including a plain picture, and the plugin
+          renders any fact it has not seen as "[重要事实]".
+
+        The other sections keep their existing contract: `open_threads` still
+        carries the mention restriction, and corrections/directives are read by
+        recall as their own blocks, so no limit here can drop a correction, a
+        retraction or a "do not mention this" rule.
+        """
         name = str(character or self._character or "").strip()
         subject_key = str(subject or "private").strip() or "private"
         labels = _labels(language)
@@ -308,7 +334,9 @@ class WorkingSummaryService:
                     name, subject_key, scene, labels, limit,
                 ),
                 "important_facts": self._facts_section(
-                    name, subject_key, scene, labels, limit,
+                    name, subject_key, scene, labels,
+                    min(limit, _TURN_FACT_LIMIT) if query is not None else limit,
+                    query=query,
                 ),
                 "open_threads": self._threads_section(
                     name, subject_key, scene, labels, limit,
@@ -458,10 +486,21 @@ class WorkingSummaryService:
     def _facts_section(
         self, character: str, subject: str, scene: Any,
         labels: Mapping[str, str], limit: int,
+        *, query: str | None = None,
     ) -> WorkingSummarySection:
-        """Currently valid facts, scope filtered, highest importance first."""
-        rows: list[dict[str, Any]] = []
+        """Currently valid facts for this person, in one of two selection modes.
+
+        Administrative (`query is None`): importance first, capped at `limit`.
+
+        Per turn (`query` given): scope + validity + **relevance**. A fact is a
+        candidate only when it shares a content term with what the user just
+        said; candidates are then ordered by shared terms, then importance. No
+        overlap means no facts, which is a normal answer for small talk and for
+        an image with no caption -- not a reason to fall back to importance.
+        """
         matters = str(subject or "private")
+        gate = None if query is None else _shareable_terms(query)
+        scored: list[tuple[int, dict[str, Any]]] = []
         for row in self._fact_rows(character):
             if not isinstance(row, Mapping) or not _status_alive(row):
                 continue
@@ -469,16 +508,31 @@ class WorkingSummaryService:
                 continue
             if not entry_applies_to_scene(row, scene, max_chars=64):
                 continue
-            if not _clean(row.get("text")):
+            text = _clean(row.get("text"))
+            if not text:
                 continue
-            rows.append(dict(row))
-        rows.sort(
-            key=lambda row: (
-                _as_int(row.get("importance"), 5),
-                _stamp(row.get("last_confirmed_at") or row.get("created_at")),
+            overlap = 0
+            if gate is not None:
+                overlap = len(gate & _shareable_terms(text))
+                if overlap <= 0:
+                    continue
+            scored.append((overlap, dict(row)))
+        if gate is not None and not scored:
+            # Nothing in this turn's words matches anything stored. Empty is the
+            # honest answer; filling the section with the highest-importance
+            # rows is exactly the unrelated-injection bug (RO03).
+            return WorkingSummarySection("important_facts", "", (), ())
+        scored.sort(
+            key=lambda item: (
+                item[0],
+                _as_int(item[1].get("importance"), 5),
+                _stamp(item[1].get("last_confirmed_at") or item[1].get("created_at")),
             ),
             reverse=True,
         )
+        rows = [item[1] for item in scored]
+        # Relevance first, importance second: a shared term is what makes a
+        # fact about *this* turn; importance only orders equally relevant rows.
         items = [
             {
                 "kind": "fact",
@@ -488,6 +542,11 @@ class WorkingSummaryService:
                 "evidence_kind": row.get("evidence_kind"),
                 "applies_to": dict(row.get("applies_to") or {}),
                 "source_keys": _source_keys(row),
+                # Why this row was offered to this turn: the terms the message
+                # and the fact share. An administrative build reports none.
+                "matched_terms": sorted(
+                    _shareable_terms(_clean(row.get("text"))) & gate
+                ) if gate is not None else [],
             }
             for row in rows[:limit]
         ]
@@ -1041,6 +1100,18 @@ def _source_keys(row: Mapping[str, Any]) -> list[str]:
             keys.extend(str(item).strip() for item in value
                         if isinstance(item, str) and item.strip())
     return list(dict.fromkeys(keys))
+
+
+def _shareable_terms(text: Any) -> set[str]:
+    """Terms that may justify injecting a fact for one turn (RO03).
+
+    Deliberately the recall tokenizer's *content* terms rather than this
+    module's `_terms`: "在吗" / "看看这张图" / "今天天气不错" must not match a
+    stored fact through a function word or a 2-gram accident. An empty result
+    means "this turn gives nothing to select on", which is a legitimate answer
+    and must not be widened into "then show the most important rows".
+    """
+    return content_terms(text)
 
 
 def _terms(text: Any) -> set[str]:

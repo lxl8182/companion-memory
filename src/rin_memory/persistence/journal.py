@@ -95,6 +95,7 @@ HOST_EVENT_TYPES: frozenset[str] = frozenset({
 #: replayed and repairable); S02 adds `core.turn_committed` (the whole-turn
 #: commit event that repairs a request result after a crash).
 CORE_EVENT_TYPES: frozenset[str] = frozenset({
+    "core.interest_signals_updated",
     "core.source_recorded",
     "core.correction_recorded",
     "core.turn_committed",

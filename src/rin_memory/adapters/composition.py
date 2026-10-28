@@ -48,6 +48,8 @@ from ..domain.reflection import (
 )
 from ..domain.state import StateService
 from ..domain.working_summary import WorkingSummaryService
+from ..domain.profile import InterestService
+from ..persistence.interest_signals import InterestSignalStore
 from ..persistence.atomic import FileSystemAtomicStore
 from ..persistence.clock import SystemClock
 from ..persistence.consumer_refs import ConsumerRefStore
@@ -428,6 +430,10 @@ class MemoryCore:
     #: ignores them behaves exactly as before.
     proactive: ProactiveStore
     proactive_service: ProactiveService
+    #: RO03: interest evidence (see domain/profile.py) and its store, so a
+    #: reader can report the data version without going through the service.
+    interests: InterestService
+    interest_signals: InterestSignalStore
 
     def recover(self, character: str) -> RecoveryResult:
         """Replay the unapplied journal tail; idempotent, call before writes.
@@ -635,6 +641,15 @@ def build_memory_core(
     working_summary_store = WorkingSummaryStore(
         roots=roots, store=store, clock=clock, permit=permit,
     )
+    # RO03: interest evidence for the existing `about_owner` section. One
+    # store, wired once here, read by both the extractor (writes) and recall
+    # (reports): a second store would be a second writer.
+    interest_signal_store = InterestSignalStore(
+        roots=roots, store=store, permit=permit, journal=journal,
+    )
+    interests = InterestService(
+        store=interest_signal_store, barrier=barrier, clock=clock, facts=facts,
+    )
     working_summary = WorkingSummaryService(
         character="",
         clock=clock,
@@ -682,6 +697,7 @@ def build_memory_core(
         # S02/R01: a committed reply must stop being served once the fact it
         # was generated from is corrected.
         CorrectionTurnInvalidator(turn_requests, facts),
+        interests,
     )
     services = deletion_services or DeletionServices()
     if services.recent is None:
@@ -698,6 +714,7 @@ def build_memory_core(
                 _AdminCleaner(persona_admin_service),
                 _OutputCleaner(output_service),
                 _ProactiveCleaner(proactive_service),
+                interests,
             ) if services.persona is None else services.persona,
             recent=RecentDeletionCleaner(recent, barrier),
             # S02/R01: invalidate committed turn results for deleted sources.
@@ -762,6 +779,7 @@ def build_memory_core(
         corrections=correction_service,
         conversation_state=ConversationState(state_service, barrier, clock),
         proactive=proactive_service,
+        interests=interests,
     )
     compression = CompressionService(
         recent=recent, barrier=barrier, clock=clock, model=model,
@@ -784,6 +802,7 @@ def build_memory_core(
         roots=roots,
         state=state_service,
         working_summary=working_summary,
+        interests=interests,
     )
     # B07: outbox dispatch + one maintenance round; no background task is
     # started here (the standalone entry / host supervisor owns scheduling).
@@ -866,6 +885,8 @@ def build_memory_core(
         working_summary_service=working_summary,
         proactive=proactive_store,
         proactive_service=proactive_service,
+        interests=interests,
+        interest_signals=interest_signal_store,
     )
 
 
