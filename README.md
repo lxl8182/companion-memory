@@ -73,7 +73,7 @@ flowchart LR
 
 ### 构建与启动
 
-需要 Python 3.11+ 和 uv 构建工具。当前发行包为 `rin-memory 0.1.0.dev9`，核心运行依赖为零。
+需要 Python 3.11+ 和 uv 构建工具。当前发行包为 `rin-memory 0.1.0.dev10`，核心运行依赖为零。
 
 ```bash
 git clone https://github.com/lxl8182/rin-memory.git

@@ -63,6 +63,8 @@ N.E.K.O 文字接线已启用。模板默认 `host.enabled=false`；填写 `host
 
 统一错误信封包含 `code/message/retryable/request_id`。401 为页面写身份过期/缺失；403 为来源或范围错误；400 为参数错误；409 为编辑冲突；422 为领域拒绝；429 为有界容量占满；503 为服务关闭/能力不可用。修订的 CAS、初始导入、发布和提案幂等均沿用领域实现。
 
+QQ 主动完成接口 `POST /v1/proactive/complete` 可传 `part_sizes`，与 `/v1/outputs` 使用同一分段合同：正整数组成的列表，总和等于规范正文的 Unicode 码点数。分隔换行计入相邻片段，表情字符计一个码点。服务固定分段后，bridge 按原索引发送并以 `/v1/outputs/deliver` 逐段回报；中断使用 `kind: interrupted`，已送达片段保留在近期对话中。
+
 `/v1/chat`、`/v1/turns`、`/v1/context`、`/v1/requests/{id}` 继续复用 S04，补充合同见 §2.3。聊天提交后记录 used，页面显示后记录 delivered；主动/实时/游戏消费者在实际接入前显示未接入。
 
 ### 2.1 管理台直连对话（不经过宿主）

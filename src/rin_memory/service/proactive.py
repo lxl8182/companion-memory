@@ -83,13 +83,21 @@ async def handle(api, action: str, body: Mapping, identity: Mapping) -> dict:
         text = body.get("text")
         if not isinstance(text, str) or not text.strip() or len(text) > 20000:
             raise ApiError("invalid_argument", "a non-empty output of at most 20000 characters is required")
+        part_sizes = body.get("part_sizes")
+        if part_sizes is not None and (
+            not isinstance(part_sizes, list)
+            or not part_sizes
+            or any(type(size) is not int or size <= 0 for size in part_sizes)
+            or sum(part_sizes) != len(text.strip())
+        ):
+            raise ApiError("invalid_argument", "part_sizes must be positive integers summing to the output length")
         # A committed output survives the short-lived context receipt. A lost
         # completion response must recover that same output after restart.
         if not candidate.get("output_id"):
             api.protocol.validate(str(body.get("context_receipt_id") or ""), scope)
         result = proactive.complete_claim(
             character, candidate_id, lease_id=lease_id, owner=owner,
-            session_id=session, text=text,
+            session_id=session, text=text, part_sizes=part_sizes,
         )
         payload = result.to_dict()
         if result.output_id:

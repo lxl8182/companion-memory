@@ -46,7 +46,7 @@ class ConversationTests(ProactiveBase):
         self.assertEqual(core.proactive_service.claim("rin", subject="private", scene=scene, owner="qq",
             session_id="qq-test", request_id="closed")["status"], "idle")
 
-    async def test_lease_preemption_and_generated_body_survive_replay(self):
+    async def test_user_input_keeps_the_leased_reply_and_generated_body_survives_replay(self):
         core = self.build()
         self.seed_thread(core)
         core.proactive_service.derive("rin")
@@ -60,16 +60,49 @@ class ConversationTests(ProactiveBase):
         self.clock.advance(hours=3)
         row = p.claim("rin", subject="private", scene="", owner="qq", session_id="qq-test", request_id="after-pass")["candidate"]
         kwargs["lease_id"] = row["lease_id"]
+        p.absorb_user_turn("rin", text="我还在", subject="private", request_id="during-generation")
         result = p.complete_claim("rin", row["candidate_id"], text="面试回来了吗，想听听你怎么说。", **kwargs)
         self.assertTrue(result.ok, result.reason)
         self.assertEqual(core.output_service.get("rin", result.output_id, include_text=True)["text"], "面试回来了吗，想听听你怎么说。")
         self.assertEqual(p.complete_claim("rin", row["candidate_id"], text="重试不能换正文", **kwargs).output_id, result.output_id)
         p.absorb_user_turn("rin", text="先说点别的，我现在很忙", subject="private", request_id="new-human")
-        self.assertFalse(p.check_delivery("rin", row["candidate_id"], **kwargs)["ok"])
-        self.assertEqual(core.output_service.get("rin", result.output_id)["status"], "interrupted")
+        self.assertTrue(p.check_delivery("rin", row["candidate_id"], **kwargs)["ok"])
+        self.assertEqual(core.output_service.get("rin", result.output_id)["status"], "pending")
 
 
 class ProactiveHttpTests(ServiceHarness):
+    def test_proactive_bubble_boundaries_survive_http_and_receipts(self):
+        p = self.service.core.proactive_service
+        now = self.service.core.clock.now().isoformat()
+        queued = p.enqueue("test", cause="agreement", maturity_source="explicit_agreement",
+            text="问问面试结果", source_keys=["host:test:private:interview"], agreed_at=now, due_at=now)
+        self.assertTrue(queued.ok, queued.reason)
+        scope = dict(subject="private", session_id="qq-test", scene="plugin:dsh-rin-memory", request_id="bubbles")
+        status, lease = self.call("POST", "/v1/proactive/poll", scope, client="desk")
+        self.assertEqual(status, 200, lease)
+        text = "面试顺利吗？\n🐈想听听"
+        sizes = [len("面试顺利吗？\n"), len("🐈想听听")]
+        body = {**scope, "candidate_id": lease["candidate"]["candidate_id"],
+                "lease_id": lease["candidate"]["lease_id"],
+                "context_receipt_id": lease["context"]["context_receipt_id"], "text": text}
+        status, rejected = self.call("POST", "/v1/proactive/complete", {**body, "part_sizes": [1]}, client="desk")
+        self.assertEqual(status, 400, rejected)
+        status, result = self.call("POST", "/v1/proactive/complete", {**body, "part_sizes": sizes}, client="desk")
+        self.assertEqual(status, 200, result)
+        output = result["output"]
+        self.assertEqual([part["text"] for part in output["segments"]], ["面试顺利吗？\n", "🐈想听听"])
+        status, sent = self.call("POST", "/v1/outputs/deliver", {**scope, "output_id": result["output_id"],
+            "kind": "sent", "parts": [{"index": 0, "platform_id": "qq-1"}]}, client="desk")
+        self.assertEqual(status, 200, sent)
+        self.assertEqual(sent["appended_parts"], [0])
+        self.assertEqual(self.service.core.output_service.get("test", result["output_id"])["status"], "partial")
+        status, interrupted = self.call("POST", "/v1/outputs/deliver", {**scope, "output_id": result["output_id"],
+            "kind": "interrupted", "parts": [], "reason": "user_preempted"}, client="desk")
+        self.assertEqual(status, 200, interrupted)
+        record = self.service.core.output_service.get("test", result["output_id"], include_text=True)
+        self.assertEqual(record["status"], "interrupted")
+        self.assertEqual(record["text"], text)
+
     def test_capability_and_session_binding_are_enforced(self):
         scope = dict(subject="private", session_id="qq-test", scene="plugin:dsh-rin-memory", request_id="poll")
         status, _ = self.call("POST", "/v1/proactive/poll", scope)
@@ -103,4 +136,4 @@ class ProactiveHttpTests(ServiceHarness):
         self.assertEqual(status, 200)
         status, checked = self.call("POST", "/v1/proactive/check", body, client="desk")
         self.assertEqual(status, 200, checked)
-        self.assertFalse(checked["ok"])
+        self.assertTrue(checked["ok"])

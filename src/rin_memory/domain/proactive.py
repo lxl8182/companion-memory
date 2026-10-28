@@ -743,19 +743,19 @@ class ProactiveService:
         return row
 
     def complete_claim(self, character: str, candidate_id: str, *, lease_id: str,
-                       owner: str, session_id: str, text: str) -> ProactiveReceipt:
+                       owner: str, session_id: str, text: str,
+                       part_sizes: Sequence[int] | None = None) -> ProactiveReceipt:
         with self._lock(character):
             row = self.leased_candidate(character, candidate_id, lease_id, owner, session_id)
             if row.get("status") == STATUS_SENT:
                 return self.send(character, candidate_id)
             until = _parse_iso(row.get("lease_until"))
-            latest = self.last_user_turn(character, str(row.get("subject") or "private"))
-            if not until or until <= self._now() or latest.get("request_id") != row.get("lease_user_event"):
-                return ProactiveReceipt(ok=False, reason="proactive_preempted")
+            if not until or until <= self._now():
+                return ProactiveReceipt(ok=False, reason="proactive_lease_expired")
             return self.send(
                 character, candidate_id, subject=str(row.get("subject") or "private"),
                 scene=str(row.get("lease_scene") or row.get("scene") or ""), session_id=session_id,
-                request_id="proactive:" + candidate_id, text=text,
+                request_id="proactive:" + candidate_id, text=text, part_sizes=part_sizes,
             )
 
     def release_claim(self, character: str, candidate_id: str, *, lease_id: str,
@@ -770,11 +770,8 @@ class ProactiveService:
         """Recheck a persisted body immediately before each transport attempt."""
         with self._lock(character):
             row = self.leased_candidate(character, candidate_id, lease_id, owner, session_id)
-            latest = self.last_user_turn(character, str(row.get("subject") or "private"))
             if row.get("status") != STATUS_SENT:
                 verdict = {"status": DISPATCH_REFUSED, "reason": REASON_NOT_LIVE}
-            elif latest.get("request_id") != row.get("lease_user_event"):
-                verdict = {"status": DISPATCH_REFUSED, "reason": "proactive_preempted"}
             else:
                 verdict = self._timing_decision(
                     character, row, moment=self._now(),
@@ -898,6 +895,7 @@ class ProactiveService:
         request_id: str | None = None, session_id: str = "",
         checked: bool = False,
         text: str | None = None,
+        part_sizes: Sequence[int] | None = None,
     ) -> ProactiveReceipt:
         """Persist the body for one candidate as an M5 output record.
 
@@ -969,6 +967,7 @@ class ProactiveService:
                 episode_id=row.get("episode_id"),
                 cause=cause,
                 request_id=str(request_id or candidate_id),
+                part_sizes=part_sizes,
             )
             if not created.ok:
                 return ProactiveReceipt(
