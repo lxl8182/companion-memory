@@ -768,7 +768,9 @@ class MemoryRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        cache = "no-cache" if content_type.startswith("text/html") else "public, max-age=86400"
+        cache = "no-cache" if content_type.startswith(
+            ("text/html", "text/javascript", "application/javascript", "text/css")
+        ) else "public, max-age=86400"
         self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()

@@ -137,10 +137,15 @@ class StackTests(unittest.TestCase):
             self.assertTrue(published)
             self.assertEqual(self.request(base, "POST", "/v1/characters", dict(body, text="不得覆盖"), headers)[0], 200)
             self.assertEqual(service.core.persona_card_service.get("companion").revision, 2)
-            for asset in ("index-watercolor.html", "live.js", "motion.js", "motion.css", "assets/rin-logo-refined.svg", "assets/motion/paper-grain.png"):
-                code, raw = self.request(base, "GET", "/designs/tidebell/" + asset)
-                self.assertEqual(code, 200, asset)
-                self.assertTrue(raw)
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            for asset in ("index-watercolor.html", "live.js?v=0.1.0.dev12", "motion.js", "motion.css", "assets/rin-logo-refined.svg", "assets/motion/paper-grain.png"):
+                with opener.open(base + "/designs/tidebell/" + asset, timeout=5) as response:
+                    self.assertEqual(response.status, 200, asset)
+                    self.assertTrue(response.read())
+                    expected_cache = "no-cache" if asset.split("?")[0].endswith(
+                        (".html", ".js", ".css")
+                    ) else "public, max-age=86400"
+                    self.assertEqual(response.headers["Cache-Control"], expected_cache, asset)
             self.assertEqual(self.request(base, "GET", "/designs/tidebell/%2e%2e/stack.py")[0], 404)
         finally:
             if server:
